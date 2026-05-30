@@ -1,4 +1,4 @@
-name: Build iOS IPA
+name: Build iOS ZIP
 
 on:
   push:
@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IPA_NAME: MusicX.ipa
+  ZIP_NAME: MusicX.zip
 
 jobs:
   build-ios:
@@ -65,7 +65,7 @@ jobs:
       - name: Build iOS App (Release, No Codesign)
         run: flutter build ios --release --no-codesign
 
-      - name: Package Runner.app into IPA
+      - name: Package Runner.app into ZIP
         run: |
           set -e
 
@@ -82,27 +82,26 @@ jobs:
             exit 1
           fi
 
+          # Convert APP_PATH to absolute path
+          APP_PATH=$(cd "$APP_PATH" && pwd)
+
           echo "Packaging: $APP_PATH"
 
-          PACKAGE_DIR="${RUNNER_TEMP}/ipa_package"
-          rm -rf "$PACKAGE_DIR"
-          mkdir -p "$PACKAGE_DIR/Payload"
-          cp -R "$APP_PATH" "$PACKAGE_DIR/Payload/"
+          # Zip the Runner.app directory directly from its parent folder
+          cd "$(dirname "$APP_PATH")"
+          zip -r "${{ github.workspace }}/${{ env.ZIP_NAME }}" Runner.app
 
-          cd "$PACKAGE_DIR"
-          zip -r "${{ github.workspace }}/${{ env.IPA_NAME }}" Payload
-
-          echo "IPA created:"
-          ls -lh "${{ github.workspace }}/${{ env.IPA_NAME }}"
+          echo "ZIP created:"
+          ls -lh "${{ github.workspace }}/${{ env.ZIP_NAME }}"
           echo "=== Runner.app contents ==="
-          du -sh "$APP_PATH"
-          du -sh "$APP_PATH"/* 2>/dev/null | sort -rh | head -20
+          du -sh Runner.app
+          du -sh Runner.app/* 2>/dev/null | sort -rh | head -20
 
-      - name: Upload IPA Artifact
+      - name: Upload ZIP Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MusicX-iOS-IPA
-          path: ${{ env.IPA_NAME }}
+          name: MusicX-iOS-ZIP
+          path: ${{ env.ZIP_NAME }}
           retention-days: 30
 
       - name: Upload Build Logs on Failure
