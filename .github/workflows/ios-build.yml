@@ -1,20 +1,16 @@
-name: iOS Build
+name: Build Unsigned iOS IPA
 
 on:
   push:
-    branches: [ master, main, develop ]
-  pull_request:
     branches: [ master, main ]
   workflow_dispatch:
 
 env:
-  FLUTTER_PROJECT_DIR: .
-  IPA_NAME: MusicA.ipa
   FLUTTER_VERSION: 3.24.0
 
 jobs:
-  build-ios-debug:
-    name: Build iOS Debug IPA
+  build-unsigned-ipa:
+    name: Build Unsigned iOS IPA
     runs-on: macos-latest
     
     steps:
@@ -40,15 +36,7 @@ jobs:
         run: flutter doctor -v
       
       - name: Get Flutter Dependencies
-        run: |
-          cd ${{ env.FLUTTER_PROJECT_DIR }}
-          flutter pub get
-      
-      - name: Flutter Analyze
-        run: |
-          cd ${{ env.FLUTTER_PROJECT_DIR }}
-          flutter analyze
-        continue-on-error: true
+        run: flutter pub get
       
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
@@ -57,101 +45,15 @@ jobs:
       
       - name: Install CocoaPods
         run: |
-          cd ${{ env.FLUTTER_PROJECT_DIR }}/ios
+          cd ios
           pod install --repo-update
       
-      - name: Build iOS App
+      - name: Build iOS App (Release)
+        run: flutter build ios --release --no-codesign
+      
+      - name: Create Archive
         run: |
-          cd ${{ env.FLUTTER_PROJECT_DIR }}
-          flutter build ios --debug --no-codesign
-      
-      - name: Create IPA Archive
-        run: |
-          cd ${{ env.FLUTTER_PROJECT_DIR }}/ios
-          xcodebuild -workspace Runner.xcworkspace \
-            -scheme Runner \
-            -configuration Debug \
-            -archivePath build/Runner.xcarchive \
-            archive \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO
-      
-      - name: Export IPA
-        run: |
-          cd ${{ env.FLUTTER_PROJECT_DIR }}/ios
-          mkdir -p build/ipa
-          xcodebuild -exportArchive \
-            -archivePath build/Runner.xcarchive \
-            -exportPath build/ipa \
-            -exportOptionsPlist ../ExportOptions.plist \
-            -allowProvisioningUpdates
-        continue-on-error: true
-      
-      - name: Upload IPA Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-debug-ipa
-          path: ${{ env.FLUTTER_PROJECT_DIR }}/ios/build/ipa/*.ipa
-          if-no-files-found: warn
-      
-      - name: Upload Build Logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-logs-debug
-          path: |
-            ${{ env.FLUTTER_PROJECT_DIR }}/ios/build/
-            ${{ env.FLUTTER_PROJECT_DIR }}/build/
-          if-no-files-found: warn
-
-  build-ios-release:
-    name: Build iOS Release IPA
-    runs-on: macos-latest
-    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
-    
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          lfs: true
-          fetch-depth: 0
-      
-      - name: Checkout LFS Objects
-        run: |
-          git lfs install
-          git lfs pull
-      
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: 'stable'
-          cache: true
-      
-      - name: Get Flutter Dependencies
-        run: |
-          cd ${{ env.FLUTTER_PROJECT_DIR }}
-          flutter pub get
-      
-      - name: Setup Xcode
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: 'latest-stable'
-      
-      - name: Install CocoaPods
-        run: |
-          cd ${{ env.FLUTTER_PROJECT_DIR }}/ios
-          pod install --repo-update
-      
-      - name: Build iOS Release
-        run: |
-          cd ${{ env.FLUTTER_PROJECT_DIR }}
-          flutter build ios --release --no-codesign
-      
-      - name: Create Release Archive
-        run: |
-          cd ${{ env.FLUTTER_PROJECT_DIR }}/ios
+          cd ios
           xcodebuild -workspace Runner.xcworkspace \
             -scheme Runner \
             -configuration Release \
@@ -161,59 +63,28 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO
       
-      - name: Export Release IPA
+      - name: Export Unsigned IPA
         run: |
-          cd ${{ env.FLUTTER_PROJECT_DIR }}/ios
+          cd ios
           mkdir -p build/ipa
           xcodebuild -exportArchive \
             -archivePath build/Runner.xcarchive \
             -exportPath build/ipa \
-            -exportOptionsPlist ../ExportOptions.plist \
-            -allowProvisioningUpdates
-        continue-on-error: true
+            -exportOptionsPlist ../ExportOptions.plist
       
-      - name: Upload Release IPA
+      - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ios-release-ipa
-          path: ${{ env.FLUTTER_PROJECT_DIR }}/ios/build/ipa/*.ipa
-          if-no-files-found: warn
+          name: MusicA-unsigned-ipa
+          path: ios/build/ipa/*.ipa
+          retention-days: 30
       
-      - name: Create Release
-        if: success()
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: v1.0.0-${{ github.run_number }}
-          release_name: Release v1.0.0 Build ${{ github.run_number }}
-          body: |
-            ## Music Stem Studio v1.0.0
-            
-            ### Build Information
-            - **Build Number**: ${{ github.run_number }}
-            - **Commit**: ${{ github.sha }}
-            - **Branch**: ${{ github.ref }}
-            
-            ### Features
-            - AI-powered stem separation
-            - Chord detection
-            - Beat & tempo analysis
-            - Multi-track recording
-            - Project management
-            
-            ### Download
-            See artifacts for IPA file.
-          draft: false
-          prerelease: false
-        continue-on-error: true
-      
-      - name: Upload Build Logs
+      - name: Upload Build Logs on Failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: build-logs-release
+          name: build-logs
           path: |
-            ${{ env.FLUTTER_PROJECT_DIR }}/ios/build/
-            ${{ env.FLUTTER_PROJECT_DIR }}/build/
-          if-no-files-found: warn
+            ios/build/
+            build/
+          retention-days: 7
