@@ -1,0 +1,64 @@
+# ── Flutter / Dart ────────────────────────────────────────────────────────────
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ / Android Studio
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# Flutter / Pub
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Symbolication / obfuscation
+app.*.symbols
+app.*.map.json
+
+# Android build artifacts
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# ── iOS ───────────────────────────────────────────────────────────────────────
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/Flutter/Generated.xcconfig
+ios/Flutter/ephemeral/
+ios/Runner.xcworkspace/xcuserdata/
+ios/Runner.xcodeproj/xcuserdata/
+ios/Runner.xcodeproj/project.xcworkspace/xcuserdata/
+
+# ── CoreML Models (binary, too large for git — add via Git LFS or CI download) ─
+# Uncomment the line below to exclude; or use Git LFS if you want to track them.
+# ios/Runner/*.mlmodelc/
+# ios/Runner/*.mlpackage/
+
+# ── macOS Xcode derived data ──────────────────────────────────────────────────
+DerivedData/
+*.xccheckout
+*.xcscmblueprint
+
+# ── Scratch / temp files ──────────────────────────────────────────────────────
+*.orig
+*.rej

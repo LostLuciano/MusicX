@@ -1,0 +1,159 @@
+name: iOS Build
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    name: Build iOS IPA
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+      
+      - name: Checkout LFS Objects
+        run: git lfs pull
+      
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+          cache: true
+      
+      - name: Flutter Doctor
+        run: flutter doctor -v
+      
+      - name: Install Dependencies
+        run: flutter pub get
+      
+      - name: Run Flutter Analyze
+        run: flutter analyze
+      
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: 'latest-stable'
+      
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          pod install
+      
+      - name: Build iOS (Debug)
+        run: |
+          flutter build ios --debug --no-codesign
+      
+      - name: Create IPA Archive (Debug)
+        run: |
+          cd ios
+          xcodebuild -workspace Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Debug \
+            -archivePath build/Runner.xcarchive \
+            archive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+      
+      - name: Export IPA
+        run: |
+          cd ios
+          mkdir -p build/ipa
+          xcodebuild -exportArchive \
+            -archivePath build/Runner.xcarchive \
+            -exportPath build/ipa \
+            -exportOptionsPlist ../ExportOptions.plist \
+            -allowProvisioningUpdates
+        continue-on-error: true
+      
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-debug-ipa
+          path: ios/build/ipa/*.ipa
+          if-no-files-found: warn
+      
+      - name: Upload Build Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            ios/build/
+            *.log
+
+  # Job untuk build release (memerlukan signing certificate)
+  build-ios-release:
+    name: Build iOS Release IPA
+    runs-on: macos-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+      
+      - name: Checkout LFS Objects
+        run: git lfs pull
+      
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+          cache: true
+      
+      - name: Install Dependencies
+        run: flutter pub get
+      
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: 'latest-stable'
+      
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          pod install
+      
+      # Uncomment dan configure jika sudah ada signing certificate
+      # - name: Import Certificates
+      #   env:
+      #     CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+      #     CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+      #   run: |
+      #     echo $CERTIFICATE_BASE64 | base64 --decode > certificate.p12
+      #     security create-keychain -p "" build.keychain
+      #     security import certificate.p12 -k build.keychain -P $CERTIFICATE_PASSWORD -T /usr/bin/codesign
+      #     security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+      #     security list-keychains -s build.keychain
+      #     security default-keychain -s build.keychain
+      #     security unlock-keychain -p "" build.keychain
+      
+      # - name: Install Provisioning Profile
+      #   env:
+      #     PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+      #   run: |
+      #     mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+      #     echo $PROVISIONING_PROFILE_BASE64 | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
+      
+      - name: Build iOS Release
+        run: |
+          flutter build ios --release --no-codesign
+      
+      - name: Note about Release Build
+        run: |
+          echo "⚠️ Release build requires signing certificates and provisioning profiles"
+          echo "Please configure the following secrets in GitHub:"
+          echo "  - IOS_CERTIFICATE_BASE64"
+          echo "  - IOS_CERTIFICATE_PASSWORD"
+          echo "  - IOS_PROVISIONING_PROFILE_BASE64"
