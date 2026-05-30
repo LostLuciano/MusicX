@@ -45,50 +45,22 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Flutter pub get + precache
-        run: |
-          flutter pub get
-          flutter precache --ios
+      - name: Get Flutter Dependencies
+        run: flutter pub get
 
-      - name: Generate Flutter build files (no codesign)
+      - name: Inject dummy DEVELOPMENT_TEAM into pbxproj
         run: |
-          # Generate Generated.xcconfig and Flutter.framework without triggering
-          # Flutter's team check — we do this by running the script directly
-          cd ios
-          xcodebuild \
-            -project Runner.xcodeproj \
-            -scheme Runner \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            FLUTTER_BUILD_MODE=release \
-            FLUTTER_ROOT="$(flutter --version 2>/dev/null; dirname $(which flutter))/.." \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGN_ENTITLEMENTS="" \
-            DEVELOPMENT_TEAM="" \
-            PROVISIONING_PROFILE_SPECIFIER="" \
-            build \
-            -archivePath ../build/Runner.xcarchive \
-            2>&1 | tail -20 || true
-          cd ..
+          PBXPROJ="ios/Runner.xcodeproj/project.pbxproj"
+          if ! grep -q "DEVELOPMENT_TEAM = " "$PBXPROJ"; then
+            sed -i '' \
+              's/PRODUCT_BUNDLE_IDENTIFIER = com\.example\.flutterApp;/DEVELOPMENT_TEAM = XXXXXXXXXX;\n\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.example.flutterApp;/g' \
+              "$PBXPROJ"
+          fi
+          echo "DEVELOPMENT_TEAM entries:"
+          grep -n "DEVELOPMENT_TEAM" "$PBXPROJ"
 
-      - name: Build Flutter iOS (generate artifacts only)
-        run: |
-          # Use xcodebuild directly via flutter's build system
-          # First generate the Flutter.xcframework and build artifacts
-          flutter build ios --release --no-codesign \
-            || xcodebuild \
-              -project ios/Runner.xcodeproj \
-              -scheme Runner \
-              -configuration Release \
-              -sdk iphoneos \
-              CODE_SIGN_IDENTITY="" \
-              CODE_SIGNING_REQUIRED=NO \
-              CODE_SIGNING_ALLOWED=NO \
-              DEVELOPMENT_TEAM="" \
-              build
+      - name: Build iOS App (Release, No Codesign)
+        run: flutter build ios --release --no-codesign
 
       - name: Package Runner.app into IPA
         run: |
@@ -97,8 +69,8 @@ jobs:
           APP_PATH="build/ios/iphoneos/Runner.app"
 
           if [ ! -d "$APP_PATH" ]; then
-            echo "Runner.app not found at expected path, searching..."
-            find build -name "Runner.app" -type d 2>/dev/null || true
+            echo "Searching for Runner.app..."
+            find build -name "Runner.app" -type d 2>/dev/null
             APP_PATH=$(find build -name "Runner.app" -type d 2>/dev/null | head -1)
           fi
 
@@ -107,20 +79,18 @@ jobs:
             exit 1
           fi
 
-          echo "Using Runner.app at: $APP_PATH"
+          echo "Packaging: $APP_PATH"
 
           PACKAGE_DIR="${RUNNER_TEMP}/ipa_package"
-          IPA_PATH="${{ github.workspace }}/${{ env.IPA_NAME }}"
-
           rm -rf "$PACKAGE_DIR"
           mkdir -p "$PACKAGE_DIR/Payload"
           cp -R "$APP_PATH" "$PACKAGE_DIR/Payload/"
 
           cd "$PACKAGE_DIR"
-          zip -r "$IPA_PATH" Payload
+          zip -r "${{ github.workspace }}/${{ env.IPA_NAME }}" Payload
 
           echo "IPA created:"
-          ls -lh "$IPA_PATH"
+          ls -lh "${{ github.workspace }}/${{ env.IPA_NAME }}"
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4

@@ -44,56 +44,40 @@ jobs:
         run: flutter pub get
 
       - name: Inject dummy DEVELOPMENT_TEAM into pbxproj
-        # Flutter CLI checks for DEVELOPMENT_TEAM before building.
-        # We inject a placeholder so the check passes, then override
-        # all signing at the xcodebuild level with empty values.
         run: |
           PBXPROJ="ios/Runner.xcodeproj/project.pbxproj"
-
-          # Add DEVELOPMENT_TEAM = XXXXXXXXXX to every Release/Profile
-          # build configuration block that doesn't already have it
-          sed -i '' \
-            's/PRODUCT_BUNDLE_IDENTIFIER = com\.example\.flutterApp;/DEVELOPMENT_TEAM = XXXXXXXXXX;\n\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.example.flutterApp;/g' \
-            "$PBXPROJ"
-
-          echo "Patched pbxproj:"
+          # Only inject if not already present
+          if ! grep -q "DEVELOPMENT_TEAM = " "$PBXPROJ"; then
+            sed -i '' \
+              's/PRODUCT_BUNDLE_IDENTIFIER = com\.example\.flutterApp;/DEVELOPMENT_TEAM = XXXXXXXXXX;\n\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.example.flutterApp;/g' \
+              "$PBXPROJ"
+          fi
+          echo "DEVELOPMENT_TEAM entries:"
           grep -n "DEVELOPMENT_TEAM" "$PBXPROJ"
 
       - name: Build iOS App (Release, No Codesign)
         run: |
-          flutter build ios --release --no-codesign \
-            DEVELOPMENT_TEAM=XXXXXXXXXX \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO
+          flutter build ios --release --no-codesign
 
-      - name: Create Archive via xcodebuild
-        run: |
-          xcodebuild \
-            -project ios/Runner.xcodeproj \
-            -scheme Runner \
-            -configuration Release \
-            -sdk iphoneos \
-            -archivePath ios/build/Runner.xcarchive \
-            archive \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            DEVELOPMENT_TEAM="" \
-            PROVISIONING_PROFILE_SPECIFIER=""
-
-      - name: Package IPA from archive
+      - name: Package Runner.app into IPA
         run: |
           set -e
-          APP_PATH="ios/build/Runner.xcarchive/Products/Applications/Runner.app"
+
+          APP_PATH="build/ios/iphoneos/Runner.app"
 
           if [ ! -d "$APP_PATH" ]; then
-            echo "Searching for Runner.app in archive..."
-            find ios/build/Runner.xcarchive -name "Runner.app" -type d
-            APP_PATH=$(find ios/build/Runner.xcarchive -name "Runner.app" -type d | head -1)
+            echo "Searching for Runner.app..."
+            find build -name "Runner.app" -type d 2>/dev/null
+            APP_PATH=$(find build -name "Runner.app" -type d 2>/dev/null | head -1)
           fi
 
-          echo "Using: $APP_PATH"
+          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: Runner.app not found"
+            exit 1
+          fi
+
+          echo "Packaging: $APP_PATH"
+
           PACKAGE_DIR="${RUNNER_TEMP}/ipa_package"
           rm -rf "$PACKAGE_DIR"
           mkdir -p "$PACKAGE_DIR/Payload"
@@ -117,7 +101,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-logs
-          path: |
-            ios/build/
-            build/
+          path: build/
           retention-days: 7
