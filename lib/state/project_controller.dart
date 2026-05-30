@@ -1,5 +1,7 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:uuid/uuid.dart';
 import '../models/audio_project.dart';
 import '../services/project_repository.dart';
@@ -45,9 +47,118 @@ class ProjectController with ChangeNotifier {
     _isLoading = true;
     notifyListeners();
     _projects = await _repository.loadProjects();
+    
+    if (_projects.isEmpty) {
+      await _loadDemoProjects();
+    }
+    
     _isLoading = false;
     notifyListeners();
     _setupPositionListener();
+  }
+
+  Future<void> _loadDemoProjects() async {
+    final demos = [
+      {'key': 'classical', 'title': 'Classical Demo (Chopin)', 'file': 'classical.caf'},
+      {'key': 'trap', 'title': 'Trap Demo (Hip-hop)', 'file': 'trap.caf'},
+      {'key': 'edm', 'title': 'EDM Demo (Electronic)', 'file': 'edm.caf'},
+    ];
+
+    for (final demo in demos) {
+      final key = demo['key']!;
+      final title = demo['title']!;
+      final filename = demo['file']!;
+      final id = 'demo_$key';
+      
+      try {
+        final String jsonContent = await rootBundle.loadString('assets/samples/$key-analysis-data.json');
+        final Map<String, dynamic> data = json.decode(jsonContent);
+
+        final List<dynamic> rawChords = data['chords'] as List<dynamic>? ?? [];
+        final List<ChordSegment> chordSegments = rawChords.map((c) {
+          final double startTime = (c['startTime'] as num).toDouble();
+          final double endTime = (c['endTime'] as num).toDouble();
+          return ChordSegment(
+            id: _uuid.v4(),
+            chordName: c['name'] as String,
+            startTimeMs: (startTime * 1000).toInt(),
+            endTimeMs: (endTime * 1000).toInt(),
+          );
+        }).toList();
+
+        final double bpm = (data['tempo'] as num?)?.toDouble() ?? 120.0;
+
+        String keySig = 'C';
+        if (data.containsKey('key')) {
+          keySig = _mapPitchClassToKey(data['key'] as int);
+        } else if (chordSegments.isNotEmpty) {
+          keySig = chordSegments.first.chordName.split(':').first;
+        }
+
+        String? plainLyrics;
+        String? syncedLyrics;
+        List<LyricLine> lyricLines = [];
+        try {
+          final String lyricsContent = await rootBundle.loadString('assets/samples/$key-lyrics.json');
+          final Map<String, dynamic> lyricsData = json.decode(lyricsContent);
+          final List<dynamic> rawTranscript = lyricsData['transcript'] as List<dynamic>? ?? [];
+          
+          final List<String> plainLines = [];
+          final List<String> lrcLines = [];
+          for (final line in rawTranscript) {
+            final double startTime = (line['start'] as num).toDouble();
+            final String text = line['text'] as String? ?? '';
+            plainLines.add(text);
+            
+            // Format time tag [mm:ss.xx]
+            final minutes = (startTime / 60).floor();
+            final seconds = (startTime % 60).toStringAsFixed(2).padLeft(5, '0');
+            final timeTag = '[${minutes.toString().padLeft(2, '0')}:$seconds]';
+            lrcLines.add('$timeTag$text');
+
+            lyricLines.add(LyricLine(
+              id: _uuid.v4(),
+              timeMs: (startTime * 1000).toInt(),
+              text: text,
+            ));
+          }
+          plainLyrics = plainLines.join('\n');
+          syncedLyrics = lrcLines.join('\n');
+        } catch (_) {}
+
+        final AudioProject project = AudioProject(
+          id: id,
+          title: title,
+          originalAudioPath: 'assets/samples/$filename',
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+          status: ProjectStatus.ready,
+          stemStatus: AnalysisStatus.ready,
+          chordStatus: AnalysisStatus.ready,
+          beatStatus: AnalysisStatus.ready,
+          bpm: bpm,
+          keySignature: keySig,
+          timeSignature: '4/4',
+          stemFiles: const StemFiles(
+            vocals: 'assets/samples/Vocals.m4a',
+            drums: 'assets/samples/Drums.m4a',
+            guitar: 'assets/samples/Guitar.m4a',
+            bass: 'assets/samples/Others.m4a',
+            piano: 'assets/samples/Others.m4a',
+            other: 'assets/samples/Others.m4a',
+          ),
+          chordSegments: chordSegments,
+          plainLyrics: plainLyrics,
+          syncedLyrics: syncedLyrics,
+          lyricLines: lyricLines,
+        );
+
+        await _repository.addProject(project);
+        _projects.add(project);
+      } catch (e) {
+        debugPrint('Error loading demo project $key: $e');
+      }
+    }
   }
 
   void _setupPositionListener() {
@@ -315,8 +426,69 @@ class ProjectController with ChangeNotifier {
     try {
       final nativeService = NativeIosAudioService();
       
-      // 1. Separate stems
-      final stemPaths = await nativeService.separateStems(project.originalAudioPath!);
+      Map<String, String> stemPaths = {};
+      List<ChordSegment> chordSegments = [];
+      double tempo = 120.0;
+      String keySig = 'C';
+
+      final bool isNativeIOSSupported = !kIsWeb && Platform.isIOS;
+
+      if (isNativeIOSSupported) {
+        // 1. Separate stems
+        final rawStems = await nativeService.separateStems(project.originalAudioPath!);
+        stemPaths = Map<String, String>.from(rawStems);
+
+        // 2. Analyze chords
+        final chordData = await nativeService.analyzeChords(project.originalAudioPath!);
+        chordSegments = chordData.map((c) {
+          return ChordSegment(
+            id: _uuid.v4(),
+            chordName: c['name'] as String,
+            startTimeMs: ((c['startTime'] as double) * 1000).toInt(),
+            endTimeMs: ((c['endTime'] as double) * 1000).toInt(),
+          );
+        }).toList();
+
+        // 3. Analyze beats and tempo
+        final beatTempoData = await nativeService.analyzeBeatsAndTempo(project.originalAudioPath!);
+        tempo = (beatTempoData['tempo'] as num).toDouble();
+        
+        if (beatTempoData.containsKey('key')) {
+          keySig = _mapPitchClassToKey(beatTempoData['key'] as int);
+        } else {
+          if (chordSegments.isNotEmpty) {
+            keySig = chordSegments.first.chordName.split(':').first;
+          }
+        }
+      } else {
+        // Mock fallback simulation for desktop/simulator/web testing
+        await Future.delayed(const Duration(seconds: 2));
+        
+        // Use demo assets as mock stems
+        stemPaths = {
+          'vocals': 'assets/samples/Vocals.m4a',
+          'drums': 'assets/samples/Drums.m4a',
+          'guitar': 'assets/samples/Guitar.m4a',
+          'bass': 'assets/samples/Others.m4a',
+          'piano': 'assets/samples/Others.m4a',
+          'other': 'assets/samples/Others.m4a',
+        };
+
+        // Populate some sample chords
+        chordSegments = [
+          ChordSegment(id: _uuid.v4(), chordName: 'C:maj', startTimeMs: 0, endTimeMs: 4000),
+          ChordSegment(id: _uuid.v4(), chordName: 'G:maj', startTimeMs: 4000, endTimeMs: 8000),
+          ChordSegment(id: _uuid.v4(), chordName: 'A:min', startTimeMs: 8000, endTimeMs: 12000),
+          ChordSegment(id: _uuid.v4(), chordName: 'F:maj', startTimeMs: 12000, endTimeMs: 16000),
+          ChordSegment(id: _uuid.v4(), chordName: 'C:maj', startTimeMs: 16000, endTimeMs: 20000),
+          ChordSegment(id: _uuid.v4(), chordName: 'G:maj', startTimeMs: 20000, endTimeMs: 24000),
+          ChordSegment(id: _uuid.v4(), chordName: 'A:min', startTimeMs: 24000, endTimeMs: 28000),
+          ChordSegment(id: _uuid.v4(), chordName: 'F:maj', startTimeMs: 28000, endTimeMs: 32000),
+        ];
+        tempo = 120.0;
+        keySig = 'C';
+      }
+
       final stemFiles = StemFiles(
         vocals: stemPaths['vocals'],
         bass: stemPaths['bass'],
@@ -325,30 +497,6 @@ class ProjectController with ChangeNotifier {
         guitar: stemPaths['guitar'],
         other: stemPaths['other'],
       );
-
-      // 2. Analyze chords
-      final chordData = await nativeService.analyzeChords(project.originalAudioPath!);
-      final List<ChordSegment> chordSegments = chordData.map((c) {
-        return ChordSegment(
-          id: _uuid.v4(),
-          chordName: c['name'] as String,
-          startTimeMs: ((c['startTime'] as double) * 1000).toInt(),
-          endTimeMs: ((c['endTime'] as double) * 1000).toInt(),
-        );
-      }).toList();
-
-      // 3. Analyze beats and tempo
-      final beatTempoData = await nativeService.analyzeBeatsAndTempo(project.originalAudioPath!);
-      final double tempo = (beatTempoData['tempo'] as num).toDouble();
-      
-      String keySig = 'C';
-      if (beatTempoData.containsKey('key')) {
-        keySig = _mapPitchClassToKey(beatTempoData['key'] as int);
-      } else {
-        if (chordSegments.isNotEmpty) {
-          keySig = chordSegments.first.chordName.split(':').first;
-        }
-      }
 
       // 4. Auto-fetch lyrics from LRCLIB
       String? plainLyrics;
@@ -380,6 +528,19 @@ class ProjectController with ChangeNotifier {
         }
       } catch (le) {
         debugPrint('Auto lyric fetch failed: $le');
+      }
+
+      // If lyrics are not fetched, create mock lyrics for simulated test
+      if (lyricLines.isEmpty && !isNativeIOSSupported) {
+        plainLyrics = "Chorus\nI love this melody\nIt sounds so fine\nThis is a simulation\nOf the stem mixer app";
+        syncedLyrics = "[00:00.00]Chorus\n[00:04.00]I love this melody\n[00:08.00]It sounds so fine\n[00:12.00]This is a simulation\n[00:16.00]Of the stem mixer app";
+        lyricLines = [
+          LyricLine(id: _uuid.v4(), timeMs: 0, text: "Chorus"),
+          LyricLine(id: _uuid.v4(), timeMs: 4000, text: "I love this melody"),
+          LyricLine(id: _uuid.v4(), timeMs: 8000, text: "It sounds so fine"),
+          LyricLine(id: _uuid.v4(), timeMs: 12000, text: "This is a simulation"),
+          LyricLine(id: _uuid.v4(), timeMs: 16000, text: "Of the stem mixer app"),
+        ];
       }
 
       _activeProject = _activeProject!.copyWith(

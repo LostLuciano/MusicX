@@ -5,9 +5,10 @@ import '../../widgets/stem_vertical_slider.dart';
 import '../../widgets/waveform_placeholder.dart';
 import '../../widgets/transport_controls.dart';
 import '../../state/project_controller.dart';
+import '../../state/studio_settings_controller.dart';
 import '../../models/audio_project.dart';
-import '../../services/native_ios_audio_service.dart';
 import '../chord_viewer/chord_viewer_screen.dart';
+import '../profile/profile_sub_screens.dart';
 
 class StemMixerScreen extends StatefulWidget {
   const StemMixerScreen({super.key});
@@ -122,6 +123,8 @@ class _StemMixerScreenState extends State<StemMixerScreen> {
     }
 
     final isStemsReady = project.stemStatus == AnalysisStatus.ready;
+    final settingsController = Provider.of<StudioSettingsController>(context);
+    final bool isModelAvailable = settingsController.modelsAvailability?.stemSeparationAvailable ?? true;
 
     return Scaffold(
       backgroundColor: const Color(0xFF0F0C1B),
@@ -179,12 +182,12 @@ class _StemMixerScreenState extends State<StemMixerScreen> {
                             onMuteToggle: isStemsReady ? () {
                               final muted = !_muteState['vocals']!;
                               setState(() => _muteState['vocals'] = muted);
-                              NativeIosAudioService().muteStem('vocals', muted);
+                              controller.playerService.muteStem('vocals', muted);
                             } : null,
                             onChanged: isStemsReady
                                 ? (val) {
                                     setState(() => _vocalsVol = val);
-                                    NativeIosAudioService().setStemVolume('vocals', val);
+                                    controller.playerService.setStemVolume('vocals', val);
                                   }
                                 : (val) {},
                           ),
@@ -196,12 +199,12 @@ class _StemMixerScreenState extends State<StemMixerScreen> {
                             onMuteToggle: isStemsReady ? () {
                               final muted = !_muteState['bass']!;
                               setState(() => _muteState['bass'] = muted);
-                              NativeIosAudioService().muteStem('bass', muted);
+                              controller.playerService.muteStem('bass', muted);
                             } : null,
                             onChanged: isStemsReady
                                 ? (val) {
                                     setState(() => _bassVol = val);
-                                    NativeIosAudioService().setStemVolume('bass', val);
+                                    controller.playerService.setStemVolume('bass', val);
                                   }
                                 : (val) {},
                           ),
@@ -213,12 +216,12 @@ class _StemMixerScreenState extends State<StemMixerScreen> {
                             onMuteToggle: isStemsReady ? () {
                               final muted = !_muteState['drums']!;
                               setState(() => _muteState['drums'] = muted);
-                              NativeIosAudioService().muteStem('drums', muted);
+                              controller.playerService.muteStem('drums', muted);
                             } : null,
                             onChanged: isStemsReady
                                 ? (val) {
                                     setState(() => _drumsVol = val);
-                                    NativeIosAudioService().setStemVolume('drums', val);
+                                    controller.playerService.setStemVolume('drums', val);
                                   }
                                 : (val) {},
                           ),
@@ -230,12 +233,12 @@ class _StemMixerScreenState extends State<StemMixerScreen> {
                             onMuteToggle: isStemsReady ? () {
                               final muted = !_muteState['piano']!;
                               setState(() => _muteState['piano'] = muted);
-                              NativeIosAudioService().muteStem('piano', muted);
+                              controller.playerService.muteStem('piano', muted);
                             } : null,
                             onChanged: isStemsReady
                                 ? (val) {
                                     setState(() => _pianoVol = val);
-                                    NativeIosAudioService().setStemVolume('piano', val);
+                                    controller.playerService.setStemVolume('piano', val);
                                   }
                                 : (val) {},
                           ),
@@ -247,12 +250,12 @@ class _StemMixerScreenState extends State<StemMixerScreen> {
                             onMuteToggle: isStemsReady ? () {
                               final muted = !_muteState['guitar']!;
                               setState(() => _muteState['guitar'] = muted);
-                              NativeIosAudioService().muteStem('guitar', muted);
+                              controller.playerService.muteStem('guitar', muted);
                             } : null,
                             onChanged: isStemsReady
                                 ? (val) {
                                     setState(() => _guitarVol = val);
-                                    NativeIosAudioService().setStemVolume('guitar', val);
+                                    controller.playerService.setStemVolume('guitar', val);
                                   }
                                 : (val) {},
                           ),
@@ -264,12 +267,12 @@ class _StemMixerScreenState extends State<StemMixerScreen> {
                             onMuteToggle: isStemsReady ? () {
                               final muted = !_muteState['other']!;
                               setState(() => _muteState['other'] = muted);
-                              NativeIosAudioService().muteStem('other', muted);
+                              controller.playerService.muteStem('other', muted);
                             } : null,
                             onChanged: isStemsReady
                                 ? (val) {
                                     setState(() => _otherVol = val);
-                                    NativeIosAudioService().setStemVolume('other', val);
+                                    controller.playerService.setStemVolume('other', val);
                                   }
                                 : (val) {},
                           ),
@@ -294,15 +297,15 @@ class _StemMixerScreenState extends State<StemMixerScreen> {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(
-                              Icons.lock_outline_rounded,
-                              color: Color(0xFFFF2E93),
+                            Icon(
+                              isModelAvailable ? Icons.auto_awesome : Icons.lock_outline_rounded,
+                              color: const Color(0xFFFF2E93),
                               size: 36,
                             ),
                             const SizedBox(height: 12),
-                            const Text(
-                              'Separation Belum Tersedia',
-                              style: TextStyle(
+                            Text(
+                              isModelAvailable ? 'Pemisahan Stem Belum Diproses' : 'Separation Belum Tersedia',
+                              style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
@@ -310,7 +313,9 @@ class _StemMixerScreenState extends State<StemMixerScreen> {
                             ),
                             const SizedBox(height: 6),
                             Text(
-                              'Stem separation model belum diunduh / tidak tersedia offline di platform ini.',
+                              isModelAvailable
+                                  ? 'Model pemisahan stem siap digunakan. Silakan proses audio ini untuk memisahkan instrumen.'
+                                  : 'Model pemisahan stem belum diunduh / tidak aktif offline di perangkat ini. Silakan buka Pengaturan.',
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 color: Colors.white.withValues(alpha: 0.5),
@@ -328,17 +333,24 @@ class _StemMixerScreenState extends State<StemMixerScreen> {
                               onPressed: project.stemStatus == AnalysisStatus.processing
                                   ? null
                                   : () async {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Memulai Pemisahan Stem & Analisis Musik...'),
-                                        ),
-                                      );
-                                      await controller.runProjectAnalysis();
+                                      if (isModelAvailable) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('Memulai Pemisahan Stem & Analisis Musik...'),
+                                          ),
+                                        );
+                                        await controller.runProjectAnalysis();
+                                      } else {
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(builder: (_) => const StudioSettingsScreen()),
+                                        );
+                                      }
                                     },
                               child: Text(
                                 project.stemStatus == AnalysisStatus.processing
                                     ? 'Memproses...'
-                                    : 'Siapkan Model',
+                                    : (isModelAvailable ? 'Proses Sekarang' : 'Buka Pengaturan'),
                                 style: const TextStyle(color: Colors.white),
                               ),
                             ),
@@ -419,7 +431,7 @@ class _StemMixerScreenState extends State<StemMixerScreen> {
                       return GestureDetector(
                         onTap: () async {
                           setState(() => _playbackSpeed = _speedPresets[i]);
-                          await NativeIosAudioService().setPlaybackSpeed(_speedPresets[i]);
+                          await controller.playerService.setPlaybackSpeed(_speedPresets[i]);
                         },
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 180),
