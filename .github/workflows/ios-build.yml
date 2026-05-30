@@ -24,6 +24,13 @@ jobs:
         run: |
           git lfs install
           git lfs pull
+          echo "=== LFS file sizes (should NOT be ~130 bytes if pointer) ==="
+          git lfs ls-files | head -20
+          echo "=== Actual file sizes ==="
+          find ios/Runner -name "*.mlmodelc" -o -name "*.m4a" -o -name "*.caf" | head -10 | xargs ls -lh 2>/dev/null || true
+          echo "=== Check for LFS pointers (bad if any show 'version https://git-lfs') ==="
+          file ios/Runner/Vocals.m4a 2>/dev/null || true
+          wc -c ios/Runner/Vocals.m4a 2>/dev/null || true
 
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
@@ -88,6 +95,9 @@ jobs:
 
           echo "IPA created:"
           ls -lh "${{ github.workspace }}/MusicX.ipa"
+          echo "=== Runner.app contents size ==="
+          du -sh "$APP_PATH"
+          du -sh "$APP_PATH"/* 2>/dev/null | sort -rh | head -20
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
