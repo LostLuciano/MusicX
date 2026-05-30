@@ -15,7 +15,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  FLUTTER_PROJECT_DIR: flutter_app
   IPA_NAME: MusicP.ipa
 
 jobs:
@@ -40,14 +39,11 @@ jobs:
         run: flutter --version
 
       - name: Install Flutter Dependencies
-        working-directory: ${{ env.FLUTTER_PROJECT_DIR }}
         run: |
           flutter pub get
           flutter precache --ios
 
-
       - name: Build iOS App Release No Codesign
-        working-directory: ${{ env.FLUTTER_PROJECT_DIR }}
         run: |
           flutter build ios --release --no-codesign
 
@@ -55,8 +51,8 @@ jobs:
         run: |
           set -e
 
-          APP_PATH="${{ env.FLUTTER_PROJECT_DIR }}/build/ios/iphoneos/Runner.app"
-          IPA_PATH="${{ github.workspace }}/${{ env.FLUTTER_PROJECT_DIR }}/${{ env.IPA_NAME }}"
+          APP_PATH="build/ios/iphoneos/Runner.app"
+          IPA_PATH="${{ github.workspace }}/${{ env.IPA_NAME }}"
           PACKAGE_DIR="${RUNNER_TEMP}/ipa_package"
 
           if [ ! -d "$APP_PATH" ]; then
@@ -79,5 +75,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MusicP-iOS-IPA
-          path: ${{ env.FLUTTER_PROJECT_DIR }}/${{ env.IPA_NAME }}
+          path: ${{ env.IPA_NAME }}
           retention-days: 30
