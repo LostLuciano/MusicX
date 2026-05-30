@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 import '../models/audio_project.dart';
@@ -21,7 +22,7 @@ class LyricsService {
         return data.map((item) => Map<String, dynamic>.from(item)).toList();
       }
     } catch (e) {
-      print('Error searching lyrics: $e');
+      debugPrint('Error searching lyrics: $e');
     }
     return [];
   }
@@ -53,7 +54,7 @@ class LyricsService {
         return jsonDecode(response.body) as Map<String, dynamic>;
       }
     } catch (e) {
-      print('Error getting exact lyrics: $e');
+      debugPrint('Error getting exact lyrics: $e');
     }
     return null;
   }

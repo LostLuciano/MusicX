@@ -392,6 +392,7 @@ class _StudioSettingsScreenState extends State<StudioSettingsScreen> {
           IconButton(
             icon: const Icon(Icons.restore_rounded, color: Colors.white70),
             onPressed: () async {
+              final messenger = ScaffoldMessenger.of(context);
               final confirm = await showDialog<bool>(
                 context: context,
                 builder: (context) => AlertDialog(
@@ -417,7 +418,7 @@ class _StudioSettingsScreenState extends State<StudioSettingsScreen> {
               if (confirm == true && mounted) {
                 await settingsController.resetToDefaults();
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  messenger.showSnackBar(
                     const SnackBar(content: Text('Pengaturan direset ke default')),
                   );
                 }
@@ -731,7 +732,7 @@ class _StudioSettingsScreenState extends State<StudioSettingsScreen> {
                                 ],
                               ),
                             );
-                          }).toList(),
+                          }),
                           const SizedBox(height: 8),
                           TextButton.icon(
                             onPressed: () => settingsController.checkModelsAvailability(),
