@@ -66,7 +66,7 @@ jobs:
       - name: Build iOS App (Release, No Codesign)
         run: flutter build ios --release --no-codesign
 
-      - name: Package Runner.app into ZIP
+      - name: Package Runner.app into IPA and ZIP
         run: |
           set -e
 
@@ -88,15 +88,28 @@ jobs:
 
           echo "Packaging: $APP_PATH"
 
-          # Zip the Runner.app directory directly from its parent folder
-          cd "$(dirname "$APP_PATH")"
-          zip -r "${{ github.workspace }}/${{ env.ZIP_NAME }}" Runner.app
+          # 1. Create Payload folder and copy Runner.app into it
+          PACKAGE_DIR="${RUNNER_TEMP}/ipa_package"
+          rm -rf "$PACKAGE_DIR"
+          mkdir -p "$PACKAGE_DIR/Payload"
+          cp -R "$APP_PATH" "$PACKAGE_DIR/Payload/"
 
-          echo "ZIP created:"
-          ls -lh "${{ github.workspace }}/${{ env.ZIP_NAME }}"
+          # 2. Create the IPA file
+          IPA_NAME="MusicX.ipa"
+          cd "$PACKAGE_DIR"
+          zip -r "${{ github.workspace }}/$IPA_NAME" Payload
+
+          # 3. Create the ZIP containing the IPA file
+          cd "${{ github.workspace }}"
+          zip -r "${{ env.ZIP_NAME }}" "$IPA_NAME"
+
+          echo "Files created:"
+          ls -lh "${{ env.ZIP_NAME }}"
+          ls -lh "$IPA_NAME"
+
           echo "=== Runner.app contents ==="
-          du -sh Runner.app
-          du -sh Runner.app/* 2>/dev/null | sort -rh | head -20
+          du -sh "$APP_PATH"
+          du -sh "$APP_PATH"/* 2>/dev/null | sort -rh | head -20
 
       - name: Upload ZIP Artifact
         uses: actions/upload-artifact@v4
