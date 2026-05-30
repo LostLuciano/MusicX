@@ -25,13 +25,6 @@ jobs:
           git lfs install
           git lfs pull
 
-      - name: Verify Directory Structure
-        run: |
-          echo "Current directory: $(pwd)"
-          ls -la
-          echo "iOS directory:"
-          ls -la ios/
-
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -50,41 +43,73 @@ jobs:
       - name: Get Flutter Dependencies
         run: flutter pub get
 
-      - name: Build iOS App (Release, No Codesign)
-        run: flutter build ios --release --no-codesign
+      - name: Inject dummy DEVELOPMENT_TEAM into pbxproj
+        # Flutter CLI checks for DEVELOPMENT_TEAM before building.
+        # We inject a placeholder so the check passes, then override
+        # all signing at the xcodebuild level with empty values.
+        run: |
+          PBXPROJ="ios/Runner.xcodeproj/project.pbxproj"
 
-      - name: Create Archive
+          # Add DEVELOPMENT_TEAM = XXXXXXXXXX to every Release/Profile
+          # build configuration block that doesn't already have it
+          sed -i '' \
+            's/PRODUCT_BUNDLE_IDENTIFIER = com\.example\.flutterApp;/DEVELOPMENT_TEAM = XXXXXXXXXX;\n\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.example.flutterApp;/g' \
+            "$PBXPROJ"
+
+          echo "Patched pbxproj:"
+          grep -n "DEVELOPMENT_TEAM" "$PBXPROJ"
+
+      - name: Build iOS App (Release, No Codesign)
+        run: |
+          flutter build ios --release --no-codesign \
+            DEVELOPMENT_TEAM=XXXXXXXXXX \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Create Archive via xcodebuild
         run: |
           xcodebuild \
             -project ios/Runner.xcodeproj \
             -scheme Runner \
             -configuration Release \
+            -sdk iphoneos \
             -archivePath ios/build/Runner.xcarchive \
             archive \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            FLUTTER_BUILD_DIR=build
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER=""
 
-      - name: Export Unsigned IPA
+      - name: Package IPA from archive
         run: |
-          mkdir -p ios/build/ipa
-          xcodebuild -exportArchive \
-            -archivePath ios/build/Runner.xcarchive \
-            -exportPath ios/build/ipa \
-            -exportOptionsPlist ExportOptions.plist \
-            -allowProvisioningUpdates
+          set -e
+          APP_PATH="ios/build/Runner.xcarchive/Products/Applications/Runner.app"
 
-      - name: Verify IPA Generated
-        run: |
-          echo "Checking for IPA file:"
-          ls -la ios/build/ipa/
+          if [ ! -d "$APP_PATH" ]; then
+            echo "Searching for Runner.app in archive..."
+            find ios/build/Runner.xcarchive -name "Runner.app" -type d
+            APP_PATH=$(find ios/build/Runner.xcarchive -name "Runner.app" -type d | head -1)
+          fi
+
+          echo "Using: $APP_PATH"
+          PACKAGE_DIR="${RUNNER_TEMP}/ipa_package"
+          rm -rf "$PACKAGE_DIR"
+          mkdir -p "$PACKAGE_DIR/Payload"
+          cp -R "$APP_PATH" "$PACKAGE_DIR/Payload/"
+
+          cd "$PACKAGE_DIR"
+          zip -r "${{ github.workspace }}/MusicX.ipa" Payload
+
+          echo "IPA created:"
+          ls -lh "${{ github.workspace }}/MusicX.ipa"
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
           name: MusicX-unsigned-ipa
-          path: ios/build/ipa/*.ipa
+          path: MusicX.ipa
           retention-days: 30
 
       - name: Upload Build Logs on Failure

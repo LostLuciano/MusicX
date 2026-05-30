@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IPA_NAME: MusicP.ipa
+  IPA_NAME: MusicX.ipa
 
 jobs:
   build-ios:
@@ -29,40 +29,91 @@ jobs:
         with:
           lfs: true
 
+      - name: Checkout LFS Objects
+        run: |
+          git lfs install
+          git lfs pull
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: 'latest-stable'
+
       - name: Setup Flutter SDK
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      - name: Show Flutter Version
-        run: flutter --version
-
-      - name: Install Flutter Dependencies
+      - name: Flutter pub get + precache
         run: |
           flutter pub get
           flutter precache --ios
 
-      - name: Build iOS App Release No Codesign
+      - name: Generate Flutter build files (no codesign)
         run: |
-          flutter build ios --release --no-codesign
+          # Generate Generated.xcconfig and Flutter.framework without triggering
+          # Flutter's team check — we do this by running the script directly
+          cd ios
+          xcodebuild \
+            -project Runner.xcodeproj \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            FLUTTER_BUILD_MODE=release \
+            FLUTTER_ROOT="$(flutter --version 2>/dev/null; dirname $(which flutter))/.." \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_ENTITLEMENTS="" \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            build \
+            -archivePath ../build/Runner.xcarchive \
+            2>&1 | tail -20 || true
+          cd ..
+
+      - name: Build Flutter iOS (generate artifacts only)
+        run: |
+          # Use xcodebuild directly via flutter's build system
+          # First generate the Flutter.xcframework and build artifacts
+          flutter build ios --release --no-codesign \
+            || xcodebuild \
+              -project ios/Runner.xcodeproj \
+              -scheme Runner \
+              -configuration Release \
+              -sdk iphoneos \
+              CODE_SIGN_IDENTITY="" \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGNING_ALLOWED=NO \
+              DEVELOPMENT_TEAM="" \
+              build
 
       - name: Package Runner.app into IPA
         run: |
           set -e
 
           APP_PATH="build/ios/iphoneos/Runner.app"
-          IPA_PATH="${{ github.workspace }}/${{ env.IPA_NAME }}"
-          PACKAGE_DIR="${RUNNER_TEMP}/ipa_package"
 
           if [ ! -d "$APP_PATH" ]; then
-            echo "Runner.app not found at: $APP_PATH"
+            echo "Runner.app not found at expected path, searching..."
+            find build -name "Runner.app" -type d 2>/dev/null || true
+            APP_PATH=$(find build -name "Runner.app" -type d 2>/dev/null | head -1)
+          fi
+
+          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: Runner.app not found"
             exit 1
           fi
 
+          echo "Using Runner.app at: $APP_PATH"
+
+          PACKAGE_DIR="${RUNNER_TEMP}/ipa_package"
+          IPA_PATH="${{ github.workspace }}/${{ env.IPA_NAME }}"
+
           rm -rf "$PACKAGE_DIR"
           mkdir -p "$PACKAGE_DIR/Payload"
-
           cp -R "$APP_PATH" "$PACKAGE_DIR/Payload/"
 
           cd "$PACKAGE_DIR"
@@ -74,6 +125,14 @@ jobs:
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MusicP-iOS-IPA
+          name: MusicX-iOS-IPA
           path: ${{ env.IPA_NAME }}
           retention-days: 30
+
+      - name: Upload Build Logs on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: build/
+          retention-days: 7
