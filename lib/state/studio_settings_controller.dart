@@ -33,10 +33,9 @@ class StudioSettingsController with ChangeNotifier {
     notifyListeners();
 
     try {
-      final bool isWebOrSimulator = kIsWeb || defaultTargetPlatform != TargetPlatform.iOS;
-      final stemAvailable = isWebOrSimulator ? true : await _nativeService.checkStemModelAvailability();
-      final chordAvailable = isWebOrSimulator ? true : await _nativeService.checkChordModelAvailability();
-      final beatAvailable = isWebOrSimulator ? true : await _nativeService.checkBeatModelAvailability();
+      final stemAvailable = await _nativeService.checkStemModelAvailability();
+      final chordAvailable = await _nativeService.checkChordModelAvailability();
+      final beatAvailable = await _nativeService.checkBeatModelAvailability();
 
       final List<ModelStatus> models = [
         ModelStatus(
