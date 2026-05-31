@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import '../models/audio_project.dart';
@@ -8,9 +9,42 @@ class AudioPlayerService {
   final Map<String, AudioPlayer> _stemPlayers = {};
   final Map<String, double> _stemVolumes = {};
   final Map<String, bool> _stemMutes = {};
+  final Set<String> _soloedStems = {};
   AudioProject? _loadedProject;
 
+  VoidCallback? onChanged;
+
+  // A-B Looping states
+  double? loopStartSeconds;
+  double? loopEndSeconds;
+  bool isLoopEnabled = false;
+
+  // Count-in states
+  bool countInEnabled = false;
+  int countInBars = 1; // 1 or 2 bars
+  bool _isCountingIn = false;
+  bool get isCountingIn => _isCountingIn;
+
+  // Pitch/Key shift states
+  double _pitchShift = 0.0;
+  double get pitchShift => _pitchShift;
+
   AudioPlayer get player => _player;
+
+  AudioPlayerService() {
+    _initLoopListener();
+  }
+
+  void _initLoopListener() {
+    _player.positionStream.listen((pos) {
+      if (isLoopEnabled && loopStartSeconds != null && loopEndSeconds != null) {
+        final double posSec = pos.inMilliseconds / 1000.0;
+        if (posSec >= loopEndSeconds!) {
+          seek(Duration(milliseconds: (loopStartSeconds! * 1000).toInt()));
+        }
+      }
+    });
+  }
 
   Future<void> _setSource(AudioPlayer player, String path) async {
     try {
@@ -42,6 +76,9 @@ class AudioPlayerService {
         await p.dispose();
       }
       _stemPlayers.clear();
+      _stemVolumes.clear();
+      _stemMutes.clear();
+      _soloedStems.clear();
 
       if (project.stemStatus == AnalysisStatus.ready) {
         final stems = {
@@ -59,13 +96,20 @@ class AudioPlayerService {
           if (path.isNotEmpty) {
             final p = AudioPlayer();
             _stemPlayers[stemName] = p;
-            _stemVolumes[stemName] = 1.0;
+
+            // Load saved volumes from the project if available, else default to 1.0
+            final double savedVol = project.stemVolumes[stemName] ?? 1.0;
+            _stemVolumes[stemName] = savedVol;
             _stemMutes[stemName] = false;
-            
+
             await _setSource(p, path);
           }
         }
       }
+
+      // Update volume routing initially
+      await _updateAllEffectiveVolumes();
+      onChanged?.call();
     } catch (e) {
       debugPrint('Error loading project audio file: $e');
     }
@@ -80,6 +124,10 @@ class AudioPlayerService {
     }
   }
 
+  double getStemVolume(String stemName) => _stemVolumes[stemName] ?? 1.0;
+  bool isStemMuted(String stemName) => _stemMutes[stemName] ?? false;
+  bool isStemSoloed(String stemName) => _soloedStems.contains(stemName);
+
   bool get _hasRealStems {
     if (_loadedProject == null || _loadedProject!.stemStatus != AnalysisStatus.ready) {
       return false;
@@ -87,19 +135,102 @@ class AudioPlayerService {
     final stems = _loadedProject!.stemFiles;
     if (stems == null) return false;
     final vocals = stems.vocals;
-    if (vocals == null || vocals.isEmpty || vocals.startsWith('assets/')) {
+    if (vocals == null || vocals.isEmpty) {
       return false;
     }
     return true;
   }
 
+  bool get _useNativeIosAudio {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) {
+      return false;
+    }
+    if (_loadedProject == null || _loadedProject!.stemFiles == null) {
+      return false;
+    }
+    final vocals = _loadedProject!.stemFiles!.vocals;
+    if (vocals == null || vocals.startsWith('assets/')) {
+      return false;
+    }
+    return true;
+  }
+
+  double getEffectiveVolume(String stemName) {
+    final double baseVolume = _stemVolumes[stemName] ?? 1.0;
+    final bool isMuted = _stemMutes[stemName] ?? false;
+
+    if (isMuted) return 0.0;
+
+    if (_soloedStems.isNotEmpty) {
+      if (!_soloedStems.contains(stemName)) {
+        return 0.0;
+      }
+    }
+
+    return baseVolume;
+  }
+
+  Future<void> _updateAllEffectiveVolumes() async {
+    final stemsList = ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'];
+    for (final stemName in stemsList) {
+      final effVol = getEffectiveVolume(stemName);
+      if (_hasRealStems) {
+        if (_useNativeIosAudio) {
+          await NativeIosAudioService().setStemVolume(stemName, effVol);
+        } else {
+          final p = _stemPlayers[stemName];
+          if (p != null) {
+            await p.setVolume(effVol);
+          }
+        }
+      }
+    }
+  }
+
   Future<void> play() async {
+    if (countInEnabled && _player.position == Duration.zero && _loadedProject != null && _loadedProject!.bpm != null) {
+      _isCountingIn = true;
+      onChanged?.call();
+
+      final double bpm = _loadedProject!.bpm!;
+      // Play native metronome for count-in
+      if (_useNativeIosAudio) {
+        int beatsPerBar = 4;
+        final ts = _loadedProject!.timeSignature;
+        if (ts != null && ts.contains('/')) {
+          final parsed = int.tryParse(ts.split('/').first);
+          if (parsed != null) {
+            beatsPerBar = parsed;
+          }
+        }
+
+        await NativeIosAudioService().setMetronomeVolume(1.0);
+        await NativeIosAudioService().startMetronome(
+          bpm: bpm,
+          beatsPerBar: beatsPerBar,
+        );
+      }
+
+      // Calculate delay based on time signature. Standard count-in is 1 bar (4 beats) or 2 bars (8 beats).
+      final int beats = countInBars * 4;
+      final double delayMs = (beats * 60.0 / bpm) * 1000.0;
+      await Future.delayed(Duration(milliseconds: delayMs.toInt()));
+
+      // Stop metronome after count-in
+      if (_useNativeIosAudio) {
+        await NativeIosAudioService().stopMetronome();
+      }
+
+      _isCountingIn = false;
+      onChanged?.call();
+    }
+
     if (_hasRealStems) {
       // Mute mixture, play stems
       await _player.setVolume(0.0);
       await _player.play();
 
-      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+      if (_useNativeIosAudio) {
         final stems = {
           'vocals': _loadedProject!.stemFiles?.vocals ?? '',
           'drums': _loadedProject!.stemFiles?.drums ?? '',
@@ -108,7 +239,10 @@ class AudioPlayerService {
           'piano': _loadedProject!.stemFiles?.piano ?? '',
           'other': _loadedProject!.stemFiles?.other ?? '',
         };
-        await NativeIosAudioService().playStemMix(stems);
+        await NativeIosAudioService().playStemMix(
+          stems,
+          positionSeconds: _player.position.inMilliseconds / 1000.0,
+        );
       } else {
         // Sync seek positions before playing
         final currentPos = _player.position;
@@ -126,7 +260,7 @@ class AudioPlayerService {
   Future<void> pause() async {
     await _player.pause();
     if (_hasRealStems) {
-      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+      if (_useNativeIosAudio) {
         await NativeIosAudioService().pauseStemMix();
       } else {
         for (final p in _stemPlayers.values) {
@@ -139,7 +273,7 @@ class AudioPlayerService {
   Future<void> stop() async {
     await _player.stop();
     if (_hasRealStems) {
-      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+      if (_useNativeIosAudio) {
         await NativeIosAudioService().stopStemMix();
       } else {
         for (final p in _stemPlayers.values) {
@@ -152,8 +286,8 @@ class AudioPlayerService {
   Future<void> seek(Duration position) async {
     await _player.seek(position);
     if (_hasRealStems) {
-      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
-        // Native seeking is handled by native audio engine syncing
+      if (_useNativeIosAudio) {
+        await NativeIosAudioService().seekStemMix(position.inMilliseconds / 1000.0);
       } else {
         for (final p in _stemPlayers.values) {
           await p.seek(position);
@@ -165,7 +299,7 @@ class AudioPlayerService {
   Future<void> setPlaybackSpeed(double speed) async {
     await _player.setSpeed(speed);
     if (_hasRealStems) {
-      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+      if (_useNativeIosAudio) {
         await NativeIosAudioService().setPlaybackSpeed(speed);
       } else {
         for (final p in _stemPlayers.values) {
@@ -173,57 +307,84 @@ class AudioPlayerService {
         }
       }
     }
+    onChanged?.call();
   }
 
   Future<void> setStemVolume(String stemName, double volume) async {
     _stemVolumes[stemName] = volume;
-    if (_hasRealStems) {
-      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
-        await NativeIosAudioService().setStemVolume(stemName, volume);
-      } else {
-        final p = _stemPlayers[stemName];
-        if (p != null) {
-          final isMuted = _stemMutes[stemName] ?? false;
-          await p.setVolume(isMuted ? 0.0 : volume);
-        }
-      }
-    }
+    await _updateAllEffectiveVolumes();
+    onChanged?.call();
   }
 
   Future<void> muteStem(String stemName, bool muted) async {
     _stemMutes[stemName] = muted;
-    if (_hasRealStems) {
-      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
-        await NativeIosAudioService().muteStem(stemName, muted);
-      } else {
-        final p = _stemPlayers[stemName];
-        if (p != null) {
-          final vol = _stemVolumes[stemName] ?? 1.0;
-          await p.setVolume(muted ? 0.0 : vol);
-        }
-      }
+    await _updateAllEffectiveVolumes();
+    onChanged?.call();
+  }
+
+  Future<void> toggleSoloStem(String stemName) async {
+    if (_soloedStems.contains(stemName)) {
+      _soloedStems.remove(stemName);
+    } else {
+      _soloedStems.add(stemName);
     }
+    await _updateAllEffectiveVolumes();
+    onChanged?.call();
   }
 
   Future<void> soloStem(String stemName) async {
+    _soloedStems.clear();
+    _soloedStems.add(stemName);
+    await _updateAllEffectiveVolumes();
+    onChanged?.call();
+  }
+
+  Future<void> resetMix() async {
+    _stemVolumes.clear();
+    _stemMutes.clear();
+    _soloedStems.clear();
+    final stemsList = ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'];
+    for (final name in stemsList) {
+      _stemVolumes[name] = 1.0;
+      _stemMutes[name] = false;
+    }
+    await _updateAllEffectiveVolumes();
+    onChanged?.call();
+  }
+
+  Future<void> applyPresetMix(Map<String, double> volumes) async {
+    _soloedStems.clear();
+    _stemMutes.clear();
+    for (final entry in volumes.entries) {
+      _stemVolumes[entry.key] = entry.value;
+      _stemMutes[entry.key] = entry.value == 0.0;
+    }
+    await _updateAllEffectiveVolumes();
+    onChanged?.call();
+  }
+
+  void setLoop(double start, double end, {bool enable = true}) {
+    loopStartSeconds = start;
+    loopEndSeconds = end;
+    isLoopEnabled = enable;
+    onChanged?.call();
+  }
+
+  void clearLoop() {
+    loopStartSeconds = null;
+    loopEndSeconds = null;
+    isLoopEnabled = false;
+    onChanged?.call();
+  }
+
+  Future<void> setPitchShift(double semitones) async {
+    _pitchShift = semitones;
     if (_hasRealStems) {
-      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
-        await NativeIosAudioService().soloStem(stemName);
-      } else {
-        for (final name in _stemPlayers.keys) {
-          final p = _stemPlayers[name];
-          if (p != null) {
-            if (name == stemName) {
-              final vol = _stemVolumes[name] ?? 1.0;
-              final isMuted = _stemMutes[name] ?? false;
-              await p.setVolume(isMuted ? 0.0 : vol);
-            } else {
-              await p.setVolume(0.0);
-            }
-          }
-        }
+      if (_useNativeIosAudio) {
+        await NativeIosAudioService().setPitchShift(semitones);
       }
     }
+    onChanged?.call();
   }
 
   Future<void> dispose() async {

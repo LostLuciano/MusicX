@@ -114,11 +114,22 @@ class NativeIosAudioService {
     }
   }
 
-  Future<void> playStemMix(Map<String, String> stemPaths) async {
+  Future<void> playStemMix(Map<String, String> stemPaths, {double positionSeconds = 0.0}) async {
     try {
-      await _channel.invokeMethod('playStemMix', {'stemPaths': stemPaths});
+      await _channel.invokeMethod('playStemMix', {
+        'stemPaths': stemPaths,
+        'position': positionSeconds,
+      });
     } catch (e) {
       debugPrint('Native playStemMix unavailable, using web fallback: $e');
+    }
+  }
+
+  Future<void> seekStemMix(double positionSeconds) async {
+    try {
+      await _channel.invokeMethod('seekStemMix', {'position': positionSeconds});
+    } catch (e) {
+      debugPrint('Native seekStemMix unavailable, using web fallback: $e');
     }
   }
 
@@ -138,10 +149,10 @@ class NativeIosAudioService {
     }
   }
 
-  Future<void> setStemVolume(String stemName, double volume) async {
+  Future<void> setStemVolume(String stem, double volume) async {
     try {
       await _channel.invokeMethod('setStemVolume', {
-        'stemName': stemName,
+        'stem': stem,
         'volume': volume,
       });
     } catch (e) {
@@ -176,6 +187,14 @@ class NativeIosAudioService {
     }
   }
 
+  Future<void> setPitchShift(double pitch) async {
+    try {
+      await _channel.invokeMethod('setPitchShift', {'pitch': pitch});
+    } catch (e) {
+      debugPrint('Native setPitchShift unavailable: $e');
+    }
+  }
+
   Future<String?> extractAudioFromVideo(String videoPath, String outputPath) async {
     try {
       final String? path = await _channel.invokeMethod<String>('extractAudioFromVideo', {
@@ -203,11 +222,40 @@ class NativeIosAudioService {
     }
   }
 
+  Future<String?> exportStemMix(Map<String, double> volumes, String outputPath) async {
+    try {
+      final String? path = await _channel.invokeMethod<String>('exportStemMix', {
+        'volumes': volumes,
+        'outputPath': outputPath,
+      });
+      return path;
+    } catch (e) {
+      debugPrint('Native exportStemMix failed: $e');
+      return null;
+    }
+  }
+
   Future<void> shareFile(String filePath) async {
     try {
       await _channel.invokeMethod('shareFile', {'filePath': filePath});
     } catch (e) {
       debugPrint('Native shareFile failed: $e');
+    }
+  }
+
+  Future<List<double>?> getWaveformData(String audioPath, {int binsCount = 100}) async {
+    try {
+      final List? result = await _channel.invokeMethod<List>('getWaveformData', {
+        'audioPath': audioPath,
+        'binsCount': binsCount,
+      });
+      if (result != null) {
+        return result.map((e) => (e as num).toDouble()).toList();
+      }
+      return null;
+    } catch (e) {
+      debugPrint('Native getWaveformData failed/unavailable: $e');
+      return null;
     }
   }
 

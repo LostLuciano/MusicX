@@ -27,6 +27,40 @@ public class CoreMLStemSeparator {
 
     /// Separates a local mixture audio file into six separate stem tracks using CoreML inference.
     /// Falls back to bundle demo assets if the model is not available or inference fails.
+    private func transcodeToWavIfNeeded(url: URL) async throws -> URL {
+        do {
+            let _ = try AVAudioFile(forReading: url)
+            print("[StemSeparator] Input file is readable natively.")
+            return url
+        } catch {
+            print("[StemSeparator] Native read failed: \(error.localizedDescription). Attempting transcoding...")
+        }
+
+        let asset = AVAsset(url: url)
+        
+        let tempDir = FileManager.default.temporaryDirectory
+        let tempM4aURL = tempDir.appendingPathComponent("transcoded_\(UUID().uuidString).m4a")
+        
+        guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {
+            throw NSError(domain: "CoreMLStemSeparator", code: 500,
+                          userInfo: [NSLocalizedDescriptionKey: "Gagal membuat sesi transcode audio."])
+        }
+        
+        exportSession.outputURL = tempM4aURL
+        exportSession.outputFileType = .m4a
+        
+        await exportSession.export()
+        
+        if exportSession.status == .completed {
+            print("[StemSeparator] Transcoded successfully to: \(tempM4aURL.lastPathComponent)")
+            return tempM4aURL
+        } else {
+            let exportError = exportSession.error ?? NSError(domain: "CoreMLStemSeparator", code: 500,
+                                                            userInfo: [NSLocalizedDescriptionKey: "Gagal melakukan transcoding audio."])
+            throw exportError
+        }
+    }
+
     public func separate(
         audioURL: URL,
         processingMode: String?,
@@ -41,20 +75,29 @@ public class CoreMLStemSeparator {
         onProgress("Memulai pemisahan stem...", 0.02)
         print("[StemSeparator] Starting separation on: \(audioURL.lastPathComponent)")
 
-        // Try real CoreML inference first
+        // 1. Transcode if needed
+        onProgress("Memeriksa format file audio...", 0.04)
+        let readableURL = try await transcodeToWavIfNeeded(url: audioURL)
+
         do {
-            let result = try await runRealInference(audioURL: audioURL, processingMode: processingMode, modelQuality: modelQuality, onProgress: onProgress)
+            let result = try await runRealInference(audioURL: readableURL, processingMode: processingMode, modelQuality: modelQuality, onProgress: onProgress)
             onProgress("Proses pemisahan stem berhasil diselesaikan!", 1.0)
             print("[StemSeparator] ✅ Real CoreML separation succeeded.")
+            
+            // Clean up temporary transcoded file if created
+            if readableURL != audioURL {
+                try? FileManager.default.removeItem(at: readableURL)
+            }
             return result
         } catch {
-            onProgress("CoreML akselerasi gagal: \(error.localizedDescription)", 0.1)
-            onProgress("Beralih ke mode fallback (simulasi)...", 0.15)
-            print("[StemSeparator] ⚠️ CoreML inference failed: \(error.localizedDescription)")
-            print("[StemSeparator] Falling back to bundle demo assets.")
-            let result = try copyBundleFallback(audioURL: audioURL)
-            onProgress("Proses pemisahan stem selesai (mode fallback)!", 1.0)
-            return result
+            print("[StemSeparator] ⚠️ CoreML separation failed: \(error.localizedDescription)")
+            
+            // Clean up temporary transcoded file if created
+            if readableURL != audioURL {
+                try? FileManager.default.removeItem(at: readableURL)
+            }
+            
+            throw error
         }
     }
 
@@ -75,10 +118,34 @@ public class CoreMLStemSeparator {
         let (leftChannel, rightChannel) = try loadStereoAudio(url: audioURL)
         print("[StemSeparator] Audio loaded: \(leftChannel.count) samples per channel")
 
+        // Normalize volume of left/right channels
+        var maxVal: Float = 0.0
+        for i in 0..<leftChannel.count {
+            let absL = abs(leftChannel[i])
+            if absL > maxVal { maxVal = absL }
+        }
+        for i in 0..<rightChannel.count {
+            let absR = abs(rightChannel[i])
+            if absR > maxVal { maxVal = absR }
+        }
+        
+        var normalizedLeft = leftChannel
+        var normalizedRight = rightChannel
+        if maxVal > 0.0 && maxVal < 0.95 {
+            let scale = 0.95 / maxVal
+            for i in 0..<leftChannel.count {
+                normalizedLeft[i] *= scale
+            }
+            for i in 0..<rightChannel.count {
+                normalizedRight[i] *= scale
+            }
+            print("[StemSeparator] Normalized audio volume by scale: \(scale)")
+        }
+
         // 3. Compute STFT for both channels
         onProgress("Menghitung analisis frekuensi (STFT)...", 0.2)
-        let leftSTFT = computeChannelSTFT(samples: leftChannel)
-        let rightSTFT = computeChannelSTFT(samples: rightChannel)
+        let leftSTFT = computeChannelSTFT(samples: normalizedLeft)
+        let rightSTFT = computeChannelSTFT(samples: normalizedRight)
         let totalFrames = leftSTFT.real.count
         print("[StemSeparator] STFT computed: \(totalFrames) frames × \(nBins) bins")
 
@@ -197,6 +264,55 @@ public class CoreMLStemSeparator {
 
             let outputURL = outputDir.appendingPathComponent("\(name).m4a")
             try writeAudioBuffer(pcmBuffer, to: outputURL)
+            
+            // Validate output stem files
+            let attr = try FileManager.default.attributesOfItem(atPath: outputURL.path)
+            let fileSize = attr[.size] as? UInt64 ?? 0
+            
+            let valFile = try AVAudioFile(forReading: outputURL)
+            let valFormat = valFile.processingFormat
+            let valFrameLength = valFile.length
+            let valDuration = Double(valFrameLength) / valFormat.sampleRate
+            
+            guard fileSize > 1024 else {
+                throw NSError(domain: "CoreMLStemSeparator", code: 500,
+                              userInfo: [NSLocalizedDescriptionKey: "File stem \(name) terlalu kecil (\(fileSize) bytes)"])
+            }
+            
+            guard valDuration > 0.0 else {
+                throw NSError(domain: "CoreMLStemSeparator", code: 500,
+                              userInfo: [NSLocalizedDescriptionKey: "File stem \(name) memiliki durasi kosong"])
+            }
+            
+            var peak: Float = 0.0
+            var sumSquare: Float = 0.0
+            let totalValSamples = Int(pcmBuffer.frameLength)
+            
+            if totalValSamples > 0, let valChannels = pcmBuffer.floatChannelData {
+                let channelL = valChannels[0]
+                for s in 0..<totalValSamples {
+                    let val = abs(channelL[s])
+                    if val > peak { peak = val }
+                    sumSquare += val * val
+                }
+            }
+            
+            let rms = totalValSamples > 0 ? sqrt(sumSquare / Float(totalValSamples)) : 0.0
+            
+            print("[StemSeparator] --- Stem Validation: \(name) ---")
+            print("  Path: \(outputURL.path)")
+            print("  File Size: \(fileSize) bytes")
+            print("  Duration: \(valDuration) s")
+            print("  Sample Rate: \(valFormat.sampleRate) Hz")
+            print("  Channels: \(valFormat.channelCount)")
+            print("  Peak Value: \(peak)")
+            print("  RMS Value: \(rms)")
+            
+            guard peak > 1e-5 else {
+                throw NSError(domain: "CoreMLStemSeparator", code: 500,
+                              userInfo: [NSLocalizedDescriptionKey: "File stem \(name) tidak menghasilkan suara (peak: \(peak))"])
+            }
+            
             outputPaths[name] = outputURL
             print("[StemSeparator] Wrote stereo \(name).m4a (\(pcmBuffer.frameLength) samples)")
         }

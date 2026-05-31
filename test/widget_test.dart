@@ -7,6 +7,9 @@ import 'package:flutter_app/state/project_controller.dart';
 import 'package:flutter_app/services/stem_separation_service.dart';
 import 'package:flutter_app/services/analysis_service.dart';
 
+import 'package:flutter_app/state/profile_controller.dart';
+import 'package:flutter_app/state/studio_settings_controller.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -40,13 +43,15 @@ void main() {
   });
 
   testWidgets('Music Stem Studio home loads', (WidgetTester tester) async {
-    tester.view.physicalSize = const Size(1200, 1920);
+    tester.view.physicalSize = const Size(600, 1000);
     tester.view.devicePixelRatio = 1.0;
 
     await tester.pumpWidget(
       MultiProvider(
         providers: [
           ChangeNotifierProvider(create: (_) => ProjectController()..init()),
+          ChangeNotifierProvider(create: (_) => ProfileController()..init()),
+          ChangeNotifierProvider(create: (_) => StudioSettingsController()..init()),
           ChangeNotifierProvider(create: (_) => StemSeparationService()),
           ChangeNotifierProvider(create: (_) => AnalysisService()),
         ],
@@ -58,7 +63,7 @@ void main() {
     await tester.pump();
 
     // Verify that the title of the app is shown.
-    expect(find.text('Halo, Musikus! 👋'), findsOneWidget);
+    expect(find.text('Studio'), findsOneWidget);
 
     // Reset physical size after test
     addTearDown(tester.view.resetPhysicalSize);

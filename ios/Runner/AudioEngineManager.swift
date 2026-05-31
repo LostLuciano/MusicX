@@ -12,6 +12,9 @@ public class AudioEngineManager {
     private var players: [String: AVAudioPlayerNode] = [:]
     // Dictionary tracking local URLs for loaded stem files
     private var stemFiles: [String: URL] = [:]
+    // Track loaded AVAudioFiles to support seeking
+    private var audioFiles: [String: AVAudioFile] = [:]
+    private var currentPosition: Double = 0.0
     
     private let stemNames = ["vocals", "drums", "bass", "guitar", "piano", "other"]
     
@@ -54,27 +57,66 @@ public class AudioEngineManager {
     /// Loads isolated stem files into player buffers.
     /// - Parameter stems: Dictionary mapping stem names to local file system URLs.
     public func loadStemFiles(_ stems: [String: URL]) throws {
+        // Skip reload if identical
+        if self.stemFiles == stems && !audioFiles.isEmpty {
+            print("AVAudioEngine: Stems already loaded, skipping reload.")
+            return
+        }
+        
         self.stemFiles = stems
+        self.audioFiles.removeAll()
         
         for (name, url) in stems {
             guard let player = players[name] else { continue }
-            
-            // Stop active playback before scheduling new files
             player.stop()
             
-            // Actually schedule the file:
             do {
                 let file = try AVAudioFile(forReading: url)
-                player.scheduleFile(file, at: nil, completionHandler: nil)
-                print("Scheduled stem file: \(name) -> \(url.lastPathComponent)")
+                self.audioFiles[name] = file
+                print("Loaded audio file for \(name): \(url.lastPathComponent) (length: \(file.length) frames)")
             } catch {
-                print("Failed to schedule stem file \(name): \(error.localizedDescription)")
+                print("Failed to read stem file \(name): \(error.localizedDescription)")
                 throw error
             }
         }
         
+        // Schedule all files from the beginning
+        currentPosition = 0.0
+        reschedulePlayers(at: 0.0)
+        
         // Prepare the engine
         audioEngine.prepare()
+    }
+    
+    private func reschedulePlayers(at time: Double) {
+        for (name, player) in players {
+            player.stop() // stops playback and removes scheduled events
+            
+            guard let file = audioFiles[name] else { continue }
+            let sampleRate = file.fileFormat.sampleRate
+            let startFrame = AVAudioFramePosition(time * sampleRate)
+            
+            if startFrame < file.length {
+                let frameCount = AVAudioFrameCount(file.length - startFrame)
+                player.scheduleRegion(file, startingFrame: startFrame, frameCount: frameCount, at: nil, completionHandler: nil)
+                print("Rescheduled \(name) from frame \(startFrame) / \(file.length) (\(frameCount) frames)")
+            }
+        }
+    }
+    
+    /// Seeks all player nodes to the specified position in seconds.
+    public func seek(to time: Double) {
+        currentPosition = time
+        let wasRunning = audioEngine.isRunning
+        let isPlaying = players.values.contains { $0.isPlaying }
+        
+        reschedulePlayers(at: time)
+        
+        if wasRunning && isPlaying {
+            for (_, player) in players {
+                player.play()
+            }
+        }
     }
     
     /// Starts simultaneous playback of all loaded players.
@@ -106,14 +148,37 @@ public class AudioEngineManager {
         print("AVAudioEngine: Stopped engine graph.")
     }
     
+    /// Implement setStemVolume as requested
+    public func setStemVolume(stem: String, volume: Float) {
+        let clampedVolume = max(0.0, min(volume, 2.0))
+        
+        let pathOnDisk = stemFiles[stem]?.lastPathComponent ?? "unknown"
+        let isNodePlaying = players[stem]?.isPlaying ?? false
+        let nodeExists = players[stem] != nil
+        
+        if let player = players[stem] {
+            player.volume = clampedVolume
+        } else {
+            print("Unknown stem volume target: \(stem)")
+        }
+        
+        // Target Fix: debug log requested
+        print("""
+        setStemVolume called
+        stem: \(stem)
+        volume: \(clampedVolume)
+        node exists: \(nodeExists)
+        file path: \(pathOnDisk)
+        is playing: \(isNodePlaying)
+        """)
+    }
+    
     /// Adjusts the volume slider value for a specific stem channel.
     /// - Parameters:
     ///   - stem: The identifier of the stem ("vocals", "drums", etc.)
     ///   - volume: A float value between 0.0 (silent) and 1.0 (full volume).
     public func setVolume(stem: String, volume: Float) {
-        guard let player = players[stem] else { return }
-        player.volume = volume
-        print("AVAudioEngine: Adjusted \(stem) channel volume to \(volume)")
+        setStemVolume(stem: stem, volume: volume)
     }
     
     /// Mutes or unmutes a specific stem.
@@ -146,6 +211,14 @@ public class AudioEngineManager {
     public func setPlaybackSpeed(_ speed: Float) {
         timePitchNode.rate = speed
         print("AVAudioEngine: Set playback speed to \(speed)")
+    }
+    
+    /// Adjusts the overall playback pitch in semitones (-12 to +12).
+    /// - Parameter semitones: Pitch offset in semitones.
+    public func setPitchShift(_ semitones: Float) {
+        // pitch is in cents, 1 semitone = 100 cents
+        timePitchNode.pitch = semitones * 100.0
+        print("AVAudioEngine: Set pitch shift to \(semitones) semitones (\(semitones * 100.0) cents)")
     }
     
     /// Extracts the audio track from a video file and writes it to a destination M4A URL.
@@ -201,5 +274,106 @@ public class AudioEngineManager {
             throw exportSession.error ?? NSError(domain: "AudioEngineManager", code: 500, userInfo: [NSLocalizedDescriptionKey: "Mashup composition export failed"])
         }
         print("AVAudioEngine: Successfully mixed/mashup files: \(file1URL.lastPathComponent) + \(file2URL.lastPathComponent) -> \(outputURL.lastPathComponent)")
+    }
+    
+    /// Exports the current stem mix with individual volume adjustments into a single output file using offline rendering.
+    public func exportStemMix(volumes: [String: Float], outputURL: URL) async throws {
+        // Stop current playing engine
+        let wasRunning = audioEngine.isRunning
+        if wasRunning {
+            self.stop()
+        }
+        
+        // Setup offline manual rendering mode
+        let maxNumberOfFrames: AVAudioFrameCount = 4096
+        
+        // We need to calculate the maximum duration from loaded audio files
+        var maxDuration: Double = 0.0
+        for (_, file) in audioFiles {
+            let duration = Double(file.length) / file.fileFormat.sampleRate
+            if duration > maxDuration {
+                maxDuration = duration
+            }
+        }
+        
+        guard maxDuration > 0 else {
+            throw NSError(domain: "AudioEngineManager", code: 400, userInfo: [NSLocalizedDescriptionKey: "No stem audio files loaded for exporting"])
+        }
+        
+        // Temporarily adjust volumes of players to match the export configuration
+        let originalVolumes = players.mapValues { $0.volume }
+        for (stem, vol) in volumes {
+            if let player = players[stem] {
+                player.volume = vol
+            }
+        }
+        
+        // Enable manual rendering mode
+        let format = mainMixer.outputFormat(forBus: 0)
+        do {
+            try audioEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: maxNumberOfFrames)
+        } catch {
+            // Restore volumes
+            for (stem, vol) in originalVolumes {
+                players[stem]?.volume = vol
+            }
+            throw error
+        }
+        
+        // Start engine
+        try audioEngine.start()
+        
+        // Schedule play from beginning
+        reschedulePlayers(at: 0.0)
+        for (_, player) in players {
+            player.play()
+        }
+        
+        // Open output file for writing
+        let settings = format.settings
+        let outputFile = try AVAudioFile(forWriting: outputURL, settings: settings)
+        
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: maxNumberOfFrames)!
+        
+        var totalFramesRendered: AVAudioFramePosition = 0
+        let totalFramesToRender = AVAudioFramePosition(maxDuration * format.sampleRate)
+        
+        while totalFramesRendered < totalFramesToRender {
+            let framesToRender = min(maxNumberOfFrames, AVAudioFrameCount(totalFramesToRender - totalFramesRendered))
+            let status = audioEngine.renderOffline(framesToRender, to: buffer)
+            
+            switch status {
+            case .success:
+                try outputFile.write(from: buffer)
+                totalFramesRendered += AVAudioFramePosition(framesToRender)
+            case .insufficientDataFromInputNode:
+                // Node had no data; continue
+                break;
+            case .cannotDoInCurrentContext:
+                break;
+            case .error:
+                throw NSError(domain: "AudioEngineManager", code: 500, userInfo: [NSLocalizedDescriptionKey: "Error during offline rendering"])
+            @unknown default:
+                break;
+            }
+        }
+        
+        // Clean up: stop, disable manual rendering, and restore engine state
+        for (_, player) in players {
+            player.stop()
+        }
+        audioEngine.stop()
+        audioEngine.disableManualRenderingMode()
+        
+        // Restore volumes
+        for (stem, vol) in originalVolumes {
+            players[stem]?.volume = vol
+        }
+        
+        // Restart engine if it was running before
+        if wasRunning {
+            try? audioEngine.start()
+            reschedulePlayers(at: currentPosition)
+        }
     }
 }

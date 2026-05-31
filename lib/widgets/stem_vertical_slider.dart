@@ -5,8 +5,10 @@ class StemVerticalSlider extends StatelessWidget {
   final IconData icon;
   final double volume; // 0.0 to 1.0
   final bool isMuted;
+  final bool isSoloed;
   final ValueChanged<double> onChanged;
   final VoidCallback? onMuteToggle;
+  final VoidCallback? onSoloToggle;
 
   const StemVerticalSlider({
     super.key,
@@ -15,13 +17,15 @@ class StemVerticalSlider extends StatelessWidget {
     required this.volume,
     required this.onChanged,
     this.isMuted = false,
+    this.isSoloed = false,
     this.onMuteToggle,
+    this.onSoloToggle,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final primaryColor = theme.primaryColor;
+    final primaryColor = isSoloed ? const Color(0xFFFF8C37) : theme.primaryColor;
     final effectiveVolume = isMuted ? 0.0 : volume;
 
     return Column(
@@ -58,7 +62,7 @@ class StemVerticalSlider extends StatelessWidget {
                         color: Colors.white.withValues(alpha: 0.08),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.03),
+                          color: isSoloed ? const Color(0xFFFF8C37).withValues(alpha: 0.3) : Colors.white.withValues(alpha: 0.03),
                           width: 1,
                         ),
                       ),
@@ -117,34 +121,41 @@ class StemVerticalSlider extends StatelessWidget {
         // Mute toggle icon
         GestureDetector(
           onTap: onMuteToggle,
+          onLongPress: onSoloToggle,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 180),
             padding: const EdgeInsets.all(6),
             decoration: BoxDecoration(
               color: isMuted
                   ? primaryColor.withValues(alpha: 0.2)
-                  : Colors.white.withValues(alpha: 0.03),
+                  : (isSoloed ? const Color(0xFFFF8C37).withValues(alpha: 0.2) : Colors.white.withValues(alpha: 0.03)),
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
-                color: isMuted ? primaryColor : Colors.white.withValues(alpha: 0.05),
+                color: isMuted
+                    ? primaryColor
+                    : (isSoloed ? const Color(0xFFFF8C37) : Colors.white.withValues(alpha: 0.05)),
               ),
             ),
             child: Icon(
               icon,
-              color: isMuted ? primaryColor : Colors.white54,
+              color: isMuted ? primaryColor : (isSoloed ? const Color(0xFFFF8C37) : Colors.white54),
               size: 16,
             ),
           ),
         ),
         const SizedBox(height: 6),
         // Label
-        Text(
-          label,
-          style: TextStyle(
-            color: isMuted ? primaryColor : Colors.white60,
-            fontSize: 10,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 0.4,
+        GestureDetector(
+          onTap: onMuteToggle,
+          onLongPress: onSoloToggle,
+          child: Text(
+            label,
+            style: TextStyle(
+              color: isMuted ? primaryColor : (isSoloed ? const Color(0xFFFF8C37) : Colors.white60),
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.4,
+            ),
           ),
         ),
       ],

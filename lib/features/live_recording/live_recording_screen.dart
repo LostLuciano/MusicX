@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:camera/camera.dart';
@@ -510,8 +511,10 @@ class _LiveRecordingScreenState extends State<LiveRecordingScreen> {
     );
   }
 
-  Widget _buildBackingMixerPanel(AudioProject project, Color primaryColor) {
+  Widget _buildBackingMixerPanel(AudioProject project, ProjectController controller, Color primaryColor) {
     if (project.stemStatus != AnalysisStatus.ready) return const SizedBox.shrink();
+
+    final stems = project.stemFiles;
 
     return Column(
       children: [
@@ -520,7 +523,20 @@ class _LiveRecordingScreenState extends State<LiveRecordingScreen> {
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
-              children: _stemVolumes.keys.map((key) {
+              children: _stemVolumes.keys.where((key) {
+                final String? path = switch (key) {
+                  'vocals' => stems?.vocals,
+                  'drums' => stems?.drums,
+                  'bass' => stems?.bass,
+                  'guitar' => stems?.guitar,
+                  'piano' => stems?.piano,
+                  'other' => stems?.other,
+                  _ => null,
+                };
+                if (path == null || path.isEmpty) return false;
+                if (path.startsWith('assets/')) return true;
+                return File(path).existsSync();
+              }).map((key) {
                 final double vol = _stemVolumes[key] ?? 1.0;
                 final label = switch (key) {
                   'vocals' => 'Vokal',
@@ -570,7 +586,7 @@ class _LiveRecordingScreenState extends State<LiveRecordingScreen> {
                               setState(() {
                                 _stemVolumes[key] = newVol;
                               });
-                              await NativeIosAudioService().setStemVolume(key, newVol);
+                              await controller.playerService.setStemVolume(key, newVol);
                             },
                           ),
                         ),
@@ -771,7 +787,7 @@ class _LiveRecordingScreenState extends State<LiveRecordingScreen> {
                       if (activeProject != null && _showChords) _buildScrollingChordStrip(activeProject, controller, primaryColor),
 
                       // Mixer panel
-                      if (activeProject != null && _showBackingMixer) _buildBackingMixerPanel(activeProject, primaryColor),
+                      if (activeProject != null && _showBackingMixer) _buildBackingMixerPanel(activeProject, controller, primaryColor),
 
                       // Live LED level monitor
                       LiquidGlassContainer(

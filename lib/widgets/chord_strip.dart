@@ -68,7 +68,7 @@ class ChordStrip extends StatelessWidget {
               ),
               child: Center(
                 child: Text(
-                  chord.chordName,
+                  cleanChordName(chord.chordName),
                   style: TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -91,4 +91,40 @@ class ChordStrip extends StatelessWidget {
       ),
     );
   }
+}
+
+// Chord Clean Helper
+String cleanChordName(String name) {
+  String clean = name.trim();
+  if (clean.contains(':')) {
+    final parts = clean.split(':');
+    final root = parts[0];
+    final type = parts[1].toLowerCase();
+    
+    if (type == 'maj' || type == 'major') {
+      clean = root;
+    } else if (type == 'min' || type == 'minor' || type == 'm') {
+      clean = '${root}m';
+    } else if (type == '7' || type == 'dominant7') {
+      clean = '${root}7';
+    } else if (type == 'min7' || type == 'm7') {
+      clean = '${root}m7';
+    } else if (type == 'maj7' || type == 'major7') {
+      clean = '${root}maj7';
+    } else if (type == 'sus2') {
+      clean = '${root}sus2';
+    } else if (type == 'sus4') {
+      clean = '${root}sus4';
+    } else if (type == 'dim') {
+      clean = '${root}dim';
+    } else if (type == 'aug') {
+      clean = '${root}aug';
+    } else {
+      clean = root + type;
+    }
+  }
+  if (clean.contains('/')) {
+    clean = clean.split('/')[0];
+  }
+  return clean;
 }

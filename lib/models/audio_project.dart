@@ -209,6 +209,7 @@ class AudioProject {
   final String? plainLyrics;
   final String? syncedLyrics;
   final List<LyricLine> lyricLines;
+  final Map<String, double> stemVolumes;
 
   const AudioProject({
     required this.id,
@@ -229,6 +230,7 @@ class AudioProject {
     this.plainLyrics,
     this.syncedLyrics,
     this.lyricLines = const [],
+    this.stemVolumes = const {},
   });
 
   factory AudioProject.fromJson(Map<String, dynamic> json) {
@@ -274,6 +276,9 @@ class AudioProject {
               ?.map((item) => LyricLine.fromJson(item as Map<String, dynamic>))
               .toList() ??
           [],
+      stemVolumes: json['stemVolumes'] != null
+          ? (json['stemVolumes'] as Map<String, dynamic>).map((key, val) => MapEntry(key, (val as num).toDouble()))
+          : const {},
     );
   }
 
@@ -297,6 +302,7 @@ class AudioProject {
       'plainLyrics': plainLyrics,
       'syncedLyrics': syncedLyrics,
       'lyricLines': lyricLines.map((item) => item.toJson()).toList(),
+      'stemVolumes': stemVolumes,
     };
   }
 
@@ -317,6 +323,7 @@ class AudioProject {
     String? plainLyrics,
     String? syncedLyrics,
     List<LyricLine>? lyricLines,
+    Map<String, double>? stemVolumes,
   }) {
     return AudioProject(
       id: id,
@@ -337,6 +344,7 @@ class AudioProject {
       plainLyrics: plainLyrics ?? this.plainLyrics,
       syncedLyrics: syncedLyrics ?? this.syncedLyrics,
       lyricLines: lyricLines ?? this.lyricLines,
+      stemVolumes: stemVolumes ?? this.stemVolumes,
     );
   }
 }

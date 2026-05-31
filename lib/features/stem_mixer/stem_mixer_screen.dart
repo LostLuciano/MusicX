@@ -417,6 +417,15 @@ class _StemMixerScreenState extends State<StemMixerScreen> {
                   progress: _playbackProgress,
                   isPlaying: _isPlaying,
                   seedString: project.title,
+                  audioPath: project.originalAudioPath,
+                  onSeek: (newProgress) {
+                    if (_totalDuration.inMilliseconds > 0) {
+                      final seekTarget = Duration(
+                        milliseconds: (newProgress * _totalDuration.inMilliseconds).toInt(),
+                      );
+                      controller.playerService.seek(seekTarget);
+                    }
+                  },
                 ),
                 const SizedBox(height: 6),
 
@@ -426,6 +435,127 @@ class _StemMixerScreenState extends State<StemMixerScreen> {
                   children: [
                     Text(_formatDuration(_currentPosition), style: const TextStyle(color: Colors.white38, fontSize: 11)),
                     Text('-${_formatDuration(_totalDuration - _currentPosition)}', style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                // A-B Loop Controls Row
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    OutlinedButton.icon(
+                      icon: Icon(
+                        Icons.start_rounded,
+                        size: 14,
+                        color: controller.playerService.loopStartSeconds != null ? const Color(0xFFFF8C37) : Colors.white70,
+                      ),
+                      label: Text(
+                        controller.playerService.loopStartSeconds != null
+                            ? 'A: ${_formatDuration(Duration(milliseconds: (controller.playerService.loopStartSeconds! * 1000).toInt()))}'
+                            : 'Set Loop A',
+                        style: TextStyle(
+                          color: controller.playerService.loopStartSeconds != null ? const Color(0xFFFF8C37) : Colors.white70,
+                          fontSize: 10,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        side: BorderSide(
+                          color: controller.playerService.loopStartSeconds != null
+                              ? const Color(0xFFFF8C37).withValues(alpha: 0.5)
+                              : Colors.white.withValues(alpha: 0.1),
+                        ),
+                      ),
+                      onPressed: () {
+                        final currentSec = _currentPosition.inMilliseconds / 1000.0;
+                        final end = controller.playerService.loopEndSeconds ?? (_totalDuration.inMilliseconds / 1000.0);
+                        if (currentSec < end) {
+                          setState(() {
+                            controller.playerService.setLoop(
+                              currentSec,
+                              end,
+                              enable: controller.playerService.isLoopEnabled,
+                            );
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      icon: Icon(
+                        Icons.keyboard_tab_rounded,
+                        size: 14,
+                        color: controller.playerService.loopEndSeconds != null ? const Color(0xFFFF2E93) : Colors.white70,
+                      ),
+                      label: Text(
+                        controller.playerService.loopEndSeconds != null
+                            ? 'B: ${_formatDuration(Duration(milliseconds: (controller.playerService.loopEndSeconds! * 1000).toInt()))}'
+                            : 'Set Loop B',
+                        style: TextStyle(
+                          color: controller.playerService.loopEndSeconds != null ? const Color(0xFFFF2E93) : Colors.white70,
+                          fontSize: 10,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        side: BorderSide(
+                          color: controller.playerService.loopEndSeconds != null
+                              ? const Color(0xFFFF2E93).withValues(alpha: 0.5)
+                              : Colors.white.withValues(alpha: 0.1),
+                        ),
+                      ),
+                      onPressed: () {
+                        final currentSec = _currentPosition.inMilliseconds / 1000.0;
+                        final start = controller.playerService.loopStartSeconds ?? 0.0;
+                        if (currentSec > start) {
+                          setState(() {
+                            controller.playerService.setLoop(
+                              start,
+                              currentSec,
+                              enable: controller.playerService.isLoopEnabled,
+                            );
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: Icon(
+                        controller.playerService.isLoopEnabled ? Icons.loop_rounded : Icons.loop_outlined,
+                        color: controller.playerService.isLoopEnabled ? const Color(0xFFFF8C37) : Colors.white38,
+                      ),
+                      tooltip: controller.playerService.isLoopEnabled ? 'Matikan Loop' : 'Aktifkan Loop',
+                      onPressed: () {
+                        if (controller.playerService.loopStartSeconds != null && controller.playerService.loopEndSeconds != null) {
+                          setState(() {
+                            controller.playerService.isLoopEnabled = !controller.playerService.isLoopEnabled;
+                            controller.playerService.setLoop(
+                              controller.playerService.loopStartSeconds!,
+                              controller.playerService.loopEndSeconds!,
+                              enable: controller.playerService.isLoopEnabled,
+                            );
+                          });
+                        } else {
+                          final currentSec = _currentPosition.inMilliseconds / 1000.0;
+                          final maxSec = _totalDuration.inMilliseconds / 1000.0;
+                          final start = (currentSec - 5.0).clamp(0.0, maxSec);
+                          final end = (currentSec + 5.0).clamp(0.0, maxSec);
+                          setState(() {
+                            controller.playerService.setLoop(start, end, enable: true);
+                          });
+                        }
+                      },
+                    ),
+                    if (controller.playerService.loopStartSeconds != null || controller.playerService.loopEndSeconds != null)
+                      IconButton(
+                        icon: const Icon(Icons.clear_rounded, color: Colors.white54, size: 20),
+                        tooltip: 'Hapus Loop',
+                        onPressed: () {
+                          setState(() {
+                            controller.playerService.clearLoop();
+                          });
+                        },
+                      ),
                   ],
                 ),
                 const SizedBox(height: 16),

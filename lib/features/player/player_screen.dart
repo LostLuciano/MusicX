@@ -103,6 +103,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               isPlaying: _isPlaying,
               progress: _playbackProgress,
               seedString: widget.audioPath ?? 'demo',
+              audioPath: widget.audioPath,
             ),
             const SizedBox(height: 24),
 

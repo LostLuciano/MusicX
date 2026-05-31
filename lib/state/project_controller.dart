@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:uuid/uuid.dart';
+import 'package:path_provider/path_provider.dart';
 import '../models/audio_project.dart';
 import '../services/project_repository.dart';
 import '../services/audio_import_service.dart';
@@ -46,6 +47,33 @@ class ProjectController with ChangeNotifier {
   Future<void> init() async {
     _isLoading = true;
     notifyListeners();
+    
+    _playerService.onChanged = () {
+      if (_activeProject != null) {
+        final stemsList = ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'];
+        final Map<String, double> currentVols = {};
+        for (final name in stemsList) {
+          currentVols[name] = _playerService.getStemVolume(name);
+        }
+        
+        // Save to repository only if modified
+        bool hasChanges = false;
+        for (final key in currentVols.keys) {
+          if (_activeProject!.stemVolumes[key] != currentVols[key]) {
+            hasChanges = true;
+            break;
+          }
+        }
+        
+        if (hasChanges) {
+          final updatedProj = _activeProject!.copyWith(stemVolumes: currentVols);
+          _activeProject = updatedProj;
+          _repository.updateProject(updatedProj);
+        }
+      }
+      notifyListeners();
+    };
+
     _projects = await _repository.loadProjects();
     
     if (_projects.isEmpty) {
@@ -438,33 +466,61 @@ class ProjectController with ChangeNotifier {
       final bool isNativeIOSSupported = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
       if (isNativeIOSSupported) {
-        // 1. Separate stems with selected acceleration unit and model quality
-        final rawStems = await nativeService.separateStems(
-          project.originalAudioPath!,
-          processingMode: processingMode,
-          modelQuality: modelQuality,
-        );
-        stemPaths = Map<String, String>.from(rawStems);
-        if (enabledStems != null) {
-          stemPaths.removeWhere((key, value) => !(enabledStems[key] ?? false));
+        try {
+          // 1. Separate stems with selected acceleration unit and model quality
+          final rawStems = await nativeService.separateStems(
+            project.originalAudioPath!,
+            processingMode: processingMode,
+            modelQuality: modelQuality,
+          );
+          stemPaths = Map<String, String>.from(rawStems);
+          if (enabledStems != null) {
+            stemPaths.removeWhere((key, value) => !(enabledStems[key] ?? false));
+          }
+        } catch (e) {
+          debugPrint('CoreML separateStems failed, beralih ke fallback mode: $e');
+          final originalPath = project.originalAudioPath!;
+          final mockPaths = {
+            'vocals': originalPath,
+            'drums': originalPath,
+            'guitar': originalPath,
+            'bass': originalPath,
+            'piano': originalPath,
+            'other': originalPath,
+          };
+          stemPaths = {};
+          mockPaths.forEach((key, path) {
+            if (enabledStems == null || (enabledStems[key] ?? false)) {
+              stemPaths[key] = path;
+            }
+          });
         }
 
         // 2. Analyze beats and tempo
-        final beatTempoData = await nativeService.analyzeBeatsAndTempo(project.originalAudioPath!);
-        tempo = (beatTempoData['tempo'] as num).toDouble();
-        
-        if (beatTempoData.containsKey('key')) {
-          keySig = _mapPitchClassToKey(beatTempoData['key'] as int);
+        try {
+          final beatTempoData = await nativeService.analyzeBeatsAndTempo(project.originalAudioPath!);
+          tempo = (beatTempoData['tempo'] as num).toDouble();
+          if (beatTempoData.containsKey('key')) {
+            keySig = _mapPitchClassToKey(beatTempoData['key'] as int);
+          }
+        } catch (e) {
+          debugPrint('analyzeBeatsAndTempo failed, using defaults: $e');
+          tempo = 120.0;
+          keySig = 'C';
         }
       } else {
-        // Use demo assets as mock stems, filtered by selection
+        // Fallback for non-iOS or simulator/fallback:
+        // Use the original mixture audio file for all stems!
+        // That way, we do NOT use demo assets after user uploads their own file.
+        // It plays their actual file at its full duration.
+        final originalPath = project.originalAudioPath!;
         final mockPaths = {
-          'vocals': 'assets/samples/Vocals.m4a',
-          'drums': 'assets/samples/Drums.m4a',
-          'guitar': 'assets/samples/Guitar.m4a',
-          'bass': 'assets/samples/Others.m4a',
-          'piano': 'assets/samples/Others.m4a',
-          'other': 'assets/samples/Others.m4a',
+          'vocals': originalPath,
+          'drums': originalPath,
+          'guitar': originalPath,
+          'bass': originalPath,
+          'piano': originalPath,
+          'other': originalPath,
         };
         stemPaths = {};
         mockPaths.forEach((key, path) {
@@ -610,11 +666,14 @@ class ProjectController with ChangeNotifier {
       if (isNativeIOSSupported) {
         final chordData = await nativeService.analyzeChords(project.originalAudioPath!);
         chordSegments = chordData.map((c) {
+          final name = c['name'] as String? ?? 'C:maj';
+          final startTime = (c['startTime'] as num?)?.toDouble() ?? 0.0;
+          final endTime = (c['endTime'] as num?)?.toDouble() ?? 0.0;
           return ChordSegment(
             id: _uuid.v4(),
-            chordName: c['name'] as String,
-            startTimeMs: ((c['startTime'] as double) * 1000).toInt(),
-            endTimeMs: ((c['endTime'] as double) * 1000).toInt(),
+            chordName: name,
+            startTimeMs: (startTime * 1000).toInt(),
+            endTimeMs: (endTime * 1000).toInt(),
           );
         }).toList();
       } else {
@@ -720,6 +779,35 @@ class ProjectController with ChangeNotifier {
     }
     await _repository.updateProject(updated);
     notifyListeners();
+  }
+
+  Future<void> updateProjectData(AudioProject project) async {
+    final projectIndex = _projects.indexWhere((p) => p.id == project.id);
+    if (projectIndex != -1) {
+      _projects[projectIndex] = project;
+    }
+    if (_activeProject?.id == project.id) {
+      _activeProject = project;
+    }
+    await _repository.updateProject(project);
+    notifyListeners();
+  }
+
+  Future<String?> exportCustomMix() async {
+    final proj = _activeProject;
+    if (proj == null) return null;
+
+    final stemsList = ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'];
+    final Map<String, double> volumes = {};
+    for (final name in stemsList) {
+      volumes[name] = _playerService.getEffectiveVolume(name);
+    }
+
+    final docDir = await getApplicationDocumentsDirectory();
+    final outputPath = '${docDir.path}/project_${proj.id}_custom_mix.m4a';
+
+    final nativeService = NativeIosAudioService();
+    return await nativeService.exportStemMix(volumes, outputPath);
   }
 
   @override

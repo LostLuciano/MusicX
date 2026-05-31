@@ -1,6 +1,7 @@
 import Foundation
 import Flutter
 import UIKit
+import AVFoundation
 
 /// Native iOS entry point bridging requests from Flutter Dart UI code.
 public class FlutterMethodChannelBridge: NSObject {
@@ -20,6 +21,61 @@ public class FlutterMethodChannelBridge: NSObject {
         let channel = FlutterMethodChannel(name: channelName, binaryMessenger: registrar.messenger())
         self.channel = channel
         registrar.addMethodCallDelegate(self, channel: channel)
+    }
+    
+    private func extractWaveformData(audioURL: URL, binsCount: Int) throws -> [Float] {
+        let file = try AVAudioFile(forReading: audioURL)
+        let format = file.processingFormat
+        let totalFrames = Int(file.length)
+        guard totalFrames > 0 else { return [] }
+        
+        let framesPerBin = max(1, totalFrames / binsCount)
+        var amplitudes = [Float]()
+        
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(framesPerBin)) else {
+            throw NSError(domain: "AudioEngineError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to allocate AVAudioPCMBuffer"])
+        }
+        
+        for bin in 0..<binsCount {
+            let startFrame = bin * framesPerBin
+            if startFrame >= totalFrames {
+                amplitudes.append(0.0)
+                continue
+            }
+            
+            file.framePosition = AVAudioFramePosition(startFrame)
+            let framesToRead = min(AVAudioFrameCount(framesPerBin), AVAudioFrameCount(totalFrames - startFrame))
+            
+            do {
+                try file.read(into: buffer, frameCount: framesToRead)
+                
+                var maxVal: Float = 0.0
+                if let floatData = buffer.floatChannelData?[0] {
+                    var sum: Float = 0.0
+                    let count = Int(framesToRead)
+                    if count > 0 {
+                        for i in 0..<count {
+                            let sample = floatData[i]
+                            sum += sample * sample
+                        }
+                        let rms = sqrt(sum / Float(count))
+                        maxVal = rms
+                    }
+                }
+                amplitudes.append(maxVal)
+            } catch {
+                amplitudes.append(0.0)
+            }
+        }
+        
+        let maxAmp = amplitudes.max() ?? 0.0
+        if maxAmp > 0.001 {
+            amplitudes = amplitudes.map { $0 / maxAmp }
+        } else {
+            amplitudes = Array(repeating: 0.1, count: binsCount)
+        }
+        
+        return amplitudes
     }
 }
 
@@ -86,28 +142,39 @@ extension FlutterMethodChannelBridge: FlutterPlugin {
             
         case "analyzeChords":
             guard let args = arguments, let audioPath = args["audioPath"] as? String else {
+                print("[NativeBridge] analyzeChords: ERROR - MISSING_ARGUMENT (audioPath is required)")
                 result(FlutterError(code: "MISSING_ARGUMENT", message: "audioPath is required", details: nil))
                 return
             }
             
             let audioURL = URL(fileURLWithPath: audioPath)
+            print("[NativeBridge] analyzeChords: Started chord detection analysis for \(audioURL.lastPathComponent)")
             
             Task {
                 do {
                     let segments = try await chordDetector.analyzeChords(audioURL: audioURL)
+                    print("[NativeBridge] analyzeChords: Successfully detected \(segments.count) segments.")
+                    
+                    // Log first 5 segments for debugging normalization
+                    for (index, segment) in segments.prefix(5).enumerated() {
+                        print("  Segment \(index): time=\(segment.startTime)-\(segment.endTime)s, chord=\(segment.name)")
+                    }
                     
                     // Convert Codable segments to dictionary arrays
                     if let data = try? JSONEncoder().encode(segments),
                        let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [[String: Any]] {
+                        print("[NativeBridge] analyzeChords: Encoded segments to JSON dictionary successfully.")
                         DispatchQueue.main.async {
                             result(json)
                         }
                     } else {
+                        print("[NativeBridge] analyzeChords: WARNING - JSON serialization failed, returning empty array")
                         DispatchQueue.main.async {
                             result([])
                         }
                     }
                 } catch {
+                    print("[NativeBridge] analyzeChords: ERROR - analysis failed: \(error.localizedDescription)")
                     DispatchQueue.main.async {
                         result(FlutterError(code: "CHORD_ANALYSIS_FAILED", message: error.localizedDescription, details: nil))
                     }
@@ -144,12 +211,39 @@ extension FlutterMethodChannelBridge: FlutterPlugin {
             }
             
         case "playStemMix":
+            if let args = arguments, let stemPaths = args["stemPaths"] as? [String: String] {
+                var stemURLs: [String: URL] = [:]
+                for (key, path) in stemPaths {
+                    if !path.isEmpty {
+                        stemURLs[key] = URL(fileURLWithPath: path)
+                    }
+                }
+                do {
+                    try audioEngine.loadStemFiles(stemURLs)
+                } catch {
+                    result(FlutterError(code: "LOAD_FAILED", message: "Failed to load stem files in playStemMix: \(error.localizedDescription)", details: nil))
+                    return
+                }
+            }
+            
+            if let pos = arguments?["position"] as? Double {
+                audioEngine.seek(to: pos)
+            }
+            
             do {
                 try audioEngine.play()
                 result(nil)
             } catch {
                 result(FlutterError(code: "PLAYBACK_FAILED", message: error.localizedDescription, details: nil))
             }
+            
+        case "seekStemMix":
+            guard let args = arguments, let position = args["position"] as? Double else {
+                result(FlutterError(code: "MISSING_ARGUMENT", message: "position is required", details: nil))
+                return
+            }
+            audioEngine.seek(to: position)
+            result(nil)
             
         case "pauseStemMix":
             audioEngine.pause()
@@ -161,13 +255,17 @@ extension FlutterMethodChannelBridge: FlutterPlugin {
             
         case "setStemVolume":
             guard let args = arguments,
-                  let stemName = args["stemName"] as? String,
+                  let stem = args["stem"] as? String,
                   let volume = args["volume"] as? Double else {
-                result(FlutterError(code: "MISSING_ARGUMENT", message: "stemName and volume are required", details: nil))
+                result(FlutterError(
+                    code: "INVALID_ARGS",
+                    message: "stem and volume are required",
+                    details: nil
+                ))
                 return
             }
-            audioEngine.setVolume(stem: stemName, volume: Float(volume))
-            result(nil)
+            audioEngine.setStemVolume(stem: stem, volume: Float(volume))
+            result(true)
             
         case "muteStem":
             guard let args = arguments,
@@ -193,6 +291,14 @@ extension FlutterMethodChannelBridge: FlutterPlugin {
                 return
             }
             audioEngine.setPlaybackSpeed(Float(speed))
+            result(nil)
+            
+        case "setPitchShift":
+            guard let args = arguments, let pitch = args["pitch"] as? Double else {
+                result(FlutterError(code: "MISSING_ARGUMENT", message: "pitch is required", details: nil))
+                return
+            }
+            audioEngine.setPitchShift(Float(pitch))
             result(nil)
             
         case "extractAudioFromVideo":
@@ -249,6 +355,34 @@ extension FlutterMethodChannelBridge: FlutterPlugin {
                 }
             }
             
+        case "exportStemMix":
+            guard let args = arguments,
+                  let volumes = args["volumes"] as? [String: Double],
+                  let outputPath = args["outputPath"] as? String else {
+                result(FlutterError(code: "MISSING_ARGUMENT", message: "volumes and outputPath are required", details: nil))
+                return
+            }
+            let outputURL = URL(fileURLWithPath: outputPath)
+            var floatVolumes: [String: Float] = [:]
+            for (key, val) in volumes {
+                floatVolumes[key] = Float(val)
+            }
+            Task {
+                do {
+                    if FileManager.default.fileExists(atPath: outputURL.path) {
+                        try? FileManager.default.removeItem(at: outputURL)
+                    }
+                    try await audioEngine.exportStemMix(volumes: floatVolumes, outputURL: outputURL)
+                    DispatchQueue.main.async {
+                        result(outputURL.path)
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        result(FlutterError(code: "EXPORT_FAILED", message: error.localizedDescription, details: nil))
+                    }
+                }
+            }
+            
         case "shareFile":
             guard let args = arguments, let filePath = args["filePath"] as? String else {
                 result(FlutterError(code: "MISSING_ARGUMENT", message: "filePath is required", details: nil))
@@ -281,6 +415,30 @@ extension FlutterMethodChannelBridge: FlutterPlugin {
                 topVC.present(activityVC, animated: true, completion: {
                     result(nil)
                 })
+            }
+            
+        case "getWaveformData":
+            guard let args = arguments,
+                  let audioPath = args["audioPath"] as? String,
+                  let binsCount = args["binsCount"] as? Int else {
+                result(FlutterError(code: "MISSING_ARGUMENT", message: "audioPath and binsCount are required", details: nil))
+                return
+            }
+            
+            let audioURL = URL(fileURLWithPath: audioPath)
+            
+            Task {
+                do {
+                    let waveform = try self.extractWaveformData(audioURL: audioURL, binsCount: binsCount)
+                    DispatchQueue.main.async {
+                        result(waveform)
+                    }
+                } catch {
+                    print("[NativeBridge] getWaveformData: Error - \(error.localizedDescription)")
+                    DispatchQueue.main.async {
+                        result(FlutterError(code: "WAVEFORM_FAILED", message: error.localizedDescription, details: nil))
+                    }
+                }
             }
             
         case "startMetronome":

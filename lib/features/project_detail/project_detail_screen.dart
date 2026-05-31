@@ -315,6 +315,16 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                             height: 60,
                             progress: _progress,
                             isPlaying: _isPlaying,
+                            audioPath: project.originalAudioPath,
+                            seedString: project.title,
+                            onSeek: (newProgress) {
+                              if (_duration.inMilliseconds > 0) {
+                                final seekTarget = Duration(
+                                  milliseconds: (newProgress * _duration.inMilliseconds).toInt(),
+                                );
+                                controller.playerService.seek(seekTarget);
+                              }
+                            },
                           ),
                           const SizedBox(height: 16),
                           Row(
