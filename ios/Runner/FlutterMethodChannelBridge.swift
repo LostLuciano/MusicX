@@ -245,8 +245,10 @@ extension FlutterMethodChannelBridge: FlutterPlugin {
             let fileURL = URL(fileURLWithPath: filePath)
             
             DispatchQueue.main.async {
-                // Get the top-most view controller to present UIActivityViewController
-                guard let rootVC = UIApplication.shared.windows.first?.rootViewController else {
+                // Get the top-most view controller to present UIActivityViewController using modern UIWindowScene API
+                guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                      let window = windowScene.windows.first(where: { $0.isKeyWindow }),
+                      let rootVC = window.rootViewController else {
                     result(FlutterError(code: "NO_ROOT_VC", message: "Could not find root view controller", details: nil))
                     return
                 }

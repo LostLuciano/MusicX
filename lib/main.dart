@@ -4,8 +4,7 @@ import 'app.dart';
 import 'state/project_controller.dart';
 import 'state/profile_controller.dart';
 import 'state/studio_settings_controller.dart';
-import 'services/stem_separation_service.dart';
-import 'services/analysis_service.dart';
+
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,8 +14,6 @@ void main() {
         ChangeNotifierProvider(create: (_) => ProjectController()..init()),
         ChangeNotifierProvider(create: (_) => ProfileController()..init()),
         ChangeNotifierProvider(create: (_) => StudioSettingsController()..init()),
-        ChangeNotifierProvider(create: (_) => StemSeparationService()),
-        ChangeNotifierProvider(create: (_) => AnalysisService()),
       ],
       child: const MusicStemStudioApp(),
     ),

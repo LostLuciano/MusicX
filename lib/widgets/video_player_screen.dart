@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
@@ -24,15 +25,24 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   @override
   void initState() {
     super.initState();
-    _controller = VideoPlayerController.file(File(widget.filePath))
-      ..initialize().then((_) {
-        if (mounted) {
-          setState(() {
-            _isInitialized = true;
-          });
-          _controller.play();
-        }
-      });
+    if (kIsWeb ||
+        widget.filePath.startsWith('blob:') ||
+        widget.filePath.startsWith('data:') ||
+        widget.filePath.startsWith('http:') ||
+        widget.filePath.startsWith('https:')) {
+      _controller = VideoPlayerController.networkUrl(Uri.parse(widget.filePath));
+    } else {
+      _controller = VideoPlayerController.file(File(widget.filePath));
+    }
+    
+    _controller.initialize().then((_) {
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+        });
+        _controller.play();
+      }
+    });
 
     _controller.addListener(() {
       if (mounted) {

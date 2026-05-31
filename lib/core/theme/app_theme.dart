@@ -1,43 +1,49 @@
 import 'package:flutter/material.dart';
 
 class AppTheme {
-  static ThemeData get darkTheme {
+  static ThemeData get darkTheme => getDarkTheme(const Color(0xFF9D4EDD));
+
+  static ThemeData getDarkTheme(Color primaryColor) {
+    final Color secondaryColor = primaryColor.withValues(alpha: 0.25);
+    final Color surfaceColor = const Color(0xFF131022); 
+    final Color backgroundColor = const Color(0xFF0F0C1B);
+
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
-      primaryColor: const Color(0xFF9D4EDD), // Electric Purple
-      scaffoldBackgroundColor: const Color(0xFF0F0C1B), // Midnight Blue-Black
+      primaryColor: primaryColor,
+      scaffoldBackgroundColor: backgroundColor,
 
       colorScheme: ColorScheme.dark(
-        primary: const Color(0xFF9D4EDD),
-        secondary: const Color(0xFF240046),
-        surface: const Color(0xFF161224),
+        primary: primaryColor,
+        secondary: secondaryColor,
+        surface: surfaceColor,
         error: Colors.redAccent,
       ),
 
       appBarTheme: const AppBarTheme(
-        backgroundColor: Color(0xFF161224),
+        backgroundColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
         titleTextStyle: TextStyle(
           color: Colors.white,
-          fontSize: 20,
+          fontSize: 18,
           fontWeight: FontWeight.bold,
-          letterSpacing: 1.2,
+          letterSpacing: 1.0,
         ),
       ),
 
       textTheme: TextTheme(
         headlineMedium: const TextStyle(
           color: Colors.white,
-          fontSize: 28,
+          fontSize: 26,
           fontWeight: FontWeight.bold,
           letterSpacing: 1.0,
         ),
         titleLarge: const TextStyle(
-          color: Colors.white70,
+          color: Colors.white,
           fontSize: 18,
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.bold,
         ),
         bodyLarge: TextStyle(
           color: Colors.white.withValues(alpha: 0.90),
@@ -46,22 +52,22 @@ class AppTheme {
         bodyMedium: const TextStyle(color: Colors.white60, fontSize: 14),
       ),
 
-      sliderTheme: const SliderThemeData(
-        activeTrackColor: Color(0xFF9D4EDD),
+      sliderTheme: SliderThemeData(
+        activeTrackColor: primaryColor,
         inactiveTrackColor: Colors.white10,
-        thumbColor: Color(0xFFE0AAFF),
-        overlayColor: Color(0x299D4EDD),
+        thumbColor: primaryColor,
+        overlayColor: primaryColor.withValues(alpha: 0.2),
       ),
 
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF9D4EDD),
+          backgroundColor: primaryColor,
           foregroundColor: Colors.white,
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(16),
           ),
-          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
         ),
       ),
     );

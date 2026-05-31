@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
@@ -39,7 +40,10 @@ class UserProfileService {
     await prefs.setString(_profileKey, profileJson);
   }
 
-  Future<String?> saveAvatarImage(File imageFile) async {
+  Future<String?> saveAvatarImage(String sourcePath) async {
+    if (kIsWeb || sourcePath.startsWith('data:') || sourcePath.startsWith('http')) {
+      return sourcePath;
+    }
     try {
       final Directory appDir = await getApplicationDocumentsDirectory();
       final String avatarDir = '${appDir.path}/avatars';
@@ -48,7 +52,7 @@ class UserProfileService {
       final String fileName = 'avatar_${DateTime.now().millisecondsSinceEpoch}.jpg';
       final String targetPath = '$avatarDir/$fileName';
 
-      await imageFile.copy(targetPath);
+      await File(sourcePath).copy(targetPath);
       return targetPath;
     } catch (e) {
       return null;

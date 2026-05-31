@@ -20,6 +20,8 @@ class StemVerticalSlider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final primaryColor = theme.primaryColor;
     final effectiveVolume = isMuted ? 0.0 : volume;
 
     return Column(
@@ -50,32 +52,36 @@ class StemVerticalSlider extends StatelessWidget {
                   children: [
                     // Background track
                     Container(
-                      width: 14,
+                      width: 16,
                       height: height,
                       decoration: BoxDecoration(
                         color: Colors.white.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.03),
+                          width: 1,
+                        ),
                       ),
                     ),
                     // Active gradient level
                     AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      width: 14,
+                      duration: const Duration(milliseconds: 100),
+                      width: 16,
                       height: activeHeight.clamp(0.0, height),
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
                           colors: isMuted
                               ? [Colors.white24, Colors.white10]
-                              : [const Color(0xFFFF2E93), const Color(0xFFFF8C37)],
+                              : [primaryColor, primaryColor.withValues(alpha: 0.5)],
                           begin: Alignment.bottomCenter,
                           end: Alignment.topCenter,
                         ),
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(12),
                         boxShadow: isMuted
                             ? []
-                            : const [
+                            : [
                                 BoxShadow(
-                                  color: Color(0x33FF2E93),
+                                  color: primaryColor.withValues(alpha: 0.3),
                                   blurRadius: 8,
                                   spreadRadius: 1,
                                 ),
@@ -85,15 +91,18 @@ class StemVerticalSlider extends StatelessWidget {
                     // Accent indicator dot
                     if (!isMuted)
                       Positioned(
-                        bottom: (activeHeight - 7).clamp(0.0, height - 14),
+                        bottom: (activeHeight - 8).clamp(0.0, height - 16),
                         child: Container(
-                          width: 14,
-                          height: 14,
-                          decoration: const BoxDecoration(
+                          width: 16,
+                          height: 16,
+                          decoration: BoxDecoration(
                             color: Colors.white,
                             shape: BoxShape.circle,
                             boxShadow: [
-                              BoxShadow(color: Colors.black38, blurRadius: 3),
+                              BoxShadow(
+                                color: primaryColor.withValues(alpha: 0.5),
+                                blurRadius: 4,
+                              ),
                             ],
                           ),
                         ),
@@ -104,34 +113,37 @@ class StemVerticalSlider extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         // Mute toggle icon
         GestureDetector(
           onTap: onMuteToggle,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 180),
-            padding: const EdgeInsets.all(4),
+            padding: const EdgeInsets.all(6),
             decoration: BoxDecoration(
               color: isMuted
-                  ? const Color(0xFFFF2E93).withValues(alpha: 0.2)
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(6),
+                  ? primaryColor.withValues(alpha: 0.2)
+                  : Colors.white.withValues(alpha: 0.03),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: isMuted ? primaryColor : Colors.white.withValues(alpha: 0.05),
+              ),
             ),
             child: Icon(
               icon,
-              color: isMuted ? const Color(0xFFFF2E93) : Colors.white54,
+              color: isMuted ? primaryColor : Colors.white54,
               size: 16,
             ),
           ),
         ),
-        const SizedBox(height: 3),
+        const SizedBox(height: 6),
         // Label
         Text(
           label,
           style: TextStyle(
-            color: isMuted ? const Color(0xFFFF2E93) : Colors.white60,
-            fontSize: 9,
-            fontWeight: FontWeight.w700,
+            color: isMuted ? primaryColor : Colors.white60,
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
             letterSpacing: 0.4,
           ),
         ),

@@ -190,7 +190,7 @@ class ProjectController with ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> importAudioAsProject(File file) async {
+  Future<void> importAudioAsProject(PickedMedia file) async {
     _isLoading = true;
     notifyListeners();
 
@@ -206,7 +206,7 @@ class ProjectController with ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> importVideoAsProject(File file) async {
+  Future<void> importVideoAsProject(PickedMedia file) async {
     _isLoading = true;
     notifyListeners();
 
@@ -412,7 +412,7 @@ class ProjectController with ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> runProjectAnalysis() async {
+  Future<void> runProjectAnalysis({Map<String, bool>? enabledStems}) async {
     final project = _activeProject;
     if (project == null || project.originalAudioPath == null) return;
 
@@ -431,12 +431,15 @@ class ProjectController with ChangeNotifier {
       double tempo = 120.0;
       String keySig = 'C';
 
-      final bool isNativeIOSSupported = !kIsWeb && Platform.isIOS;
+      final bool isNativeIOSSupported = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
       if (isNativeIOSSupported) {
         // 1. Separate stems
         final rawStems = await nativeService.separateStems(project.originalAudioPath!);
         stemPaths = Map<String, String>.from(rawStems);
+        if (enabledStems != null) {
+          stemPaths.removeWhere((key, value) => !(enabledStems[key] ?? false));
+        }
 
         // 2. Analyze chords
         final chordData = await nativeService.analyzeChords(project.originalAudioPath!);
@@ -461,11 +464,8 @@ class ProjectController with ChangeNotifier {
           }
         }
       } else {
-        // Mock fallback simulation for desktop/simulator/web testing
-        await Future.delayed(const Duration(seconds: 2));
-        
-        // Use demo assets as mock stems
-        stemPaths = {
+        // Use demo assets as mock stems, filtered by selection
+        final mockPaths = {
           'vocals': 'assets/samples/Vocals.m4a',
           'drums': 'assets/samples/Drums.m4a',
           'guitar': 'assets/samples/Guitar.m4a',
@@ -473,18 +473,34 @@ class ProjectController with ChangeNotifier {
           'piano': 'assets/samples/Others.m4a',
           'other': 'assets/samples/Others.m4a',
         };
+        stemPaths = {};
+        mockPaths.forEach((key, path) {
+          if (enabledStems == null || (enabledStems[key] ?? false)) {
+            stemPaths[key] = path;
+          }
+        });
 
-        // Populate some sample chords
-        chordSegments = [
-          ChordSegment(id: _uuid.v4(), chordName: 'C:maj', startTimeMs: 0, endTimeMs: 4000),
-          ChordSegment(id: _uuid.v4(), chordName: 'G:maj', startTimeMs: 4000, endTimeMs: 8000),
-          ChordSegment(id: _uuid.v4(), chordName: 'A:min', startTimeMs: 8000, endTimeMs: 12000),
-          ChordSegment(id: _uuid.v4(), chordName: 'F:maj', startTimeMs: 12000, endTimeMs: 16000),
-          ChordSegment(id: _uuid.v4(), chordName: 'C:maj', startTimeMs: 16000, endTimeMs: 20000),
-          ChordSegment(id: _uuid.v4(), chordName: 'G:maj', startTimeMs: 20000, endTimeMs: 24000),
-          ChordSegment(id: _uuid.v4(), chordName: 'A:min', startTimeMs: 24000, endTimeMs: 28000),
-          ChordSegment(id: _uuid.v4(), chordName: 'F:maj', startTimeMs: 28000, endTimeMs: 32000),
-        ];
+        // Populate sample chords to the end of the song
+        final durationMs = _playerService.player.duration?.inMilliseconds ?? 180000;
+        final chordList = ['C:maj', 'G:maj', 'A:min', 'F:maj', 'D:min', 'E:min', 'A:maj', 'D:maj'];
+        chordSegments = [];
+        int currentMs = 0;
+        int chordIdx = 0;
+        const segmentDurationMs = 4000;
+        
+        while (currentMs < durationMs) {
+          final endMs = (currentMs + segmentDurationMs).clamp(0, durationMs);
+          chordSegments.add(
+            ChordSegment(
+              id: _uuid.v4(),
+              chordName: chordList[chordIdx % chordList.length],
+              startTimeMs: currentMs,
+              endTimeMs: endMs,
+            ),
+          );
+          currentMs = endMs;
+          chordIdx++;
+        }
         tempo = 120.0;
         keySig = 'C';
       }
@@ -530,17 +546,43 @@ class ProjectController with ChangeNotifier {
         debugPrint('Auto lyric fetch failed: $le');
       }
 
-      // If lyrics are not fetched, create mock lyrics for simulated test
+      // If lyrics are not fetched, create mock lyrics for simulated test spanning the whole song
       if (lyricLines.isEmpty && !isNativeIOSSupported) {
-        plainLyrics = "Chorus\nI love this melody\nIt sounds so fine\nThis is a simulation\nOf the stem mixer app";
-        syncedLyrics = "[00:00.00]Chorus\n[00:04.00]I love this melody\n[00:08.00]It sounds so fine\n[00:12.00]This is a simulation\n[00:16.00]Of the stem mixer app";
-        lyricLines = [
-          LyricLine(id: _uuid.v4(), timeMs: 0, text: "Chorus"),
-          LyricLine(id: _uuid.v4(), timeMs: 4000, text: "I love this melody"),
-          LyricLine(id: _uuid.v4(), timeMs: 8000, text: "It sounds so fine"),
-          LyricLine(id: _uuid.v4(), timeMs: 12000, text: "This is a simulation"),
-          LyricLine(id: _uuid.v4(), timeMs: 16000, text: "Of the stem mixer app"),
+        final durationMs = _playerService.player.duration?.inMilliseconds ?? 180000;
+        final List<String> lyricTexts = [
+          "Intro: Welcome to the studio",
+          "Verse 1: Sing your heart out",
+          "Pre-Chorus: Ready for the rise",
+          "Chorus: This is a beautiful mix",
+          "Verse 2: Instrument isolated stems",
+          "Bridge: Feel the beat and tempo",
+          "Outro: Fading away into silence"
         ];
+        
+        lyricLines = [];
+        int currentMs = 0;
+        int lyricIdx = 0;
+        final List<String> plainLines = [];
+        final List<String> syncedLines = [];
+        
+        while (currentMs < durationMs) {
+          final text = lyricTexts[lyricIdx % lyricTexts.length];
+          lyricLines.add(
+            LyricLine(id: _uuid.v4(), timeMs: currentMs, text: text),
+          );
+          
+          plainLines.add(text);
+          
+          final minutes = (currentMs ~/ 60000).toString().padLeft(2, '0');
+          final seconds = ((currentMs % 60000) ~/ 1000).toString().padLeft(2, '0');
+          final msPart = ((currentMs % 1000) ~/ 10).toString().padLeft(2, '0');
+          syncedLines.add("[$minutes:$seconds.$msPart]$text");
+          
+          currentMs += 8000; // 8 seconds per lyric line
+          lyricIdx++;
+        }
+        plainLyrics = plainLines.join('\n');
+        syncedLyrics = syncedLines.join('\n');
       }
 
       _activeProject = _activeProject!.copyWith(

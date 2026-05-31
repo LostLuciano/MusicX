@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
@@ -37,14 +39,29 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final result = await FilePicker.pickFiles(
       type: FileType.image,
       allowMultiple: false,
+      withData: kIsWeb,
     );
 
-    if (result != null && result.files.single.path != null) {
-      final File imageFile = File(result.files.single.path!);
+    if (result != null && result.files.isNotEmpty) {
+      final file = result.files.first;
+      String? imagePath;
+
+      if (kIsWeb) {
+        if (file.bytes != null) {
+          final base64String = base64Encode(file.bytes!);
+          final extension = file.name.split('.').last.toLowerCase();
+          final mimeType = extension == 'png' ? 'image/png' : 'image/jpeg';
+          imagePath = 'data:$mimeType;base64,$base64String';
+        }
+      } else if (file.path != null) {
+        imagePath = file.path!;
+      }
+
+      if (imagePath == null) return;
       if (!mounted) return;
       
       final profileController = Provider.of<ProfileController>(context, listen: false);
-      await profileController.updateAvatar(imageFile);
+      await profileController.updateAvatar(imagePath);
       
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -137,7 +154,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         border: Border.all(color: const Color(0xFFFF2E93), width: 3),
                         image: profile.avatarPath != null
                             ? DecorationImage(
-                                image: FileImage(File(profile.avatarPath!)),
+                                image: (kIsWeb || profile.avatarPath!.startsWith('data:') || profile.avatarPath!.startsWith('http'))
+                                    ? NetworkImage(profile.avatarPath!) as ImageProvider
+                                    : FileImage(File(profile.avatarPath!)),
                                 fit: BoxFit.cover,
                               )
                             : null,

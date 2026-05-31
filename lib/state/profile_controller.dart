@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import '../models/user_profile.dart';
 import '../services/user_profile_service.dart';
@@ -35,7 +34,7 @@ class ProfileController with ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> updateAvatar(File imageFile) async {
+  Future<void> updateAvatar(String imagePath) async {
     if (_profile == null) return;
     
     _isLoading = true;
@@ -47,7 +46,7 @@ class ProfileController with ChangeNotifier {
     }
     
     // Save new avatar
-    final String? newAvatarPath = await _profileService.saveAvatarImage(imageFile);
+    final String? newAvatarPath = await _profileService.saveAvatarImage(imagePath);
     
     if (newAvatarPath != null) {
       final updatedProfile = _profile!.copyWith(

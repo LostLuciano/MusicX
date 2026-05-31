@@ -100,7 +100,7 @@ class _StemSetupScreenState extends State<StemSetupScreen>
     final controller = Provider.of<ProjectController>(context, listen: false);
 
     // Trigger AI separation on the native side
-    await controller.runProjectAnalysis();
+    await controller.runProjectAnalysis(enabledStems: _selectedStems);
 
     if (!mounted) return;
     setState(() => _isProcessing = false);

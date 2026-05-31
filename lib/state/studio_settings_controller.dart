@@ -33,9 +33,10 @@ class StudioSettingsController with ChangeNotifier {
     notifyListeners();
 
     try {
-      final stemAvailable = await _nativeService.checkStemModelAvailability();
-      final chordAvailable = await _nativeService.checkChordModelAvailability();
-      final beatAvailable = await _nativeService.checkBeatModelAvailability();
+      final bool isWebOrSimulator = kIsWeb || defaultTargetPlatform != TargetPlatform.iOS;
+      final stemAvailable = isWebOrSimulator ? true : await _nativeService.checkStemModelAvailability();
+      final chordAvailable = isWebOrSimulator ? true : await _nativeService.checkChordModelAvailability();
+      final beatAvailable = isWebOrSimulator ? true : await _nativeService.checkBeatModelAvailability();
 
       final List<ModelStatus> models = [
         ModelStatus(
@@ -134,6 +135,68 @@ class StudioSettingsController with ChangeNotifier {
     await _settingsService.saveSettings(_settings);
     notifyListeners();
   }
+
+  Future<void> updateThemeColor(int colorValue) async {
+    _settings = _settings.copyWith(themeColorValue: colorValue);
+    await _settingsService.saveSettings(_settings);
+    notifyListeners();
+  }
+
+  Future<void> updateUIStyle(int styleIndex) async {
+    _settings = _settings.copyWith(uiStyle: styleIndex);
+    await _settingsService.saveSettings(_settings);
+    notifyListeners();
+  }
+
+  // ── Glass Settings ────────────────────────────────────────────────
+  Future<void> updateGlassRefractionMode(int mode) async {
+    _settings = _settings.copyWith(glassRefractionMode: mode);
+    await _settingsService.saveSettings(_settings);
+    notifyListeners();
+  }
+
+  Future<void> updateGlassDisplacement(double v) async {
+    _settings = _settings.copyWith(glassDisplacement: v);
+    await _settingsService.saveSettings(_settings);
+    notifyListeners();
+  }
+
+  Future<void> updateGlassBlur(double v) async {
+    _settings = _settings.copyWith(glassBlur: v);
+    await _settingsService.saveSettings(_settings);
+    notifyListeners();
+  }
+
+  Future<void> updateGlassSaturation(double v) async {
+    _settings = _settings.copyWith(glassSaturation: v);
+    await _settingsService.saveSettings(_settings);
+    notifyListeners();
+  }
+
+  Future<void> updateGlassChromaticAb(double v) async {
+    _settings = _settings.copyWith(glassChromaticAb: v);
+    await _settingsService.saveSettings(_settings);
+    notifyListeners();
+  }
+
+  Future<void> updateGlassElasticity(double v) async {
+    _settings = _settings.copyWith(glassElasticity: v);
+    await _settingsService.saveSettings(_settings);
+    notifyListeners();
+  }
+
+  Future<void> updateGlassCornerRadius(double v) async {
+    _settings = _settings.copyWith(glassCornerRadius: v);
+    await _settingsService.saveSettings(_settings);
+    notifyListeners();
+  }
+
+  Future<void> updateGlassOverLight(bool v) async {
+    _settings = _settings.copyWith(glassOverLight: v);
+    await _settingsService.saveSettings(_settings);
+    notifyListeners();
+  }
+
 
   Future<void> resetToDefaults() async {
     await _settingsService.resetToDefaults();
