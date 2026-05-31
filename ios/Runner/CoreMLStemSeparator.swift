@@ -12,10 +12,10 @@ import Accelerate
 /// Pipeline: Load audio → stereo resample 44100 → STFT → chunk → CoreML → iSTFT → write M4A
 public class CoreMLStemSeparator {
 
-    private let nFFT = 4096
-    private let hopSize = 1024
-    private let nBins = 2048           // nFFT / 2
-    private let chunkFrames = 32       // model time-axis size
+    private var nFFT = 4096
+    private var hopSize = 1024
+    private var nBins = 2048           // nFFT / 2
+    private var chunkFrames = 32       // model time-axis size
     private let targetSampleRate: Double = 44100.0
     private let stemNames = ["vocals", "drums", "bass", "guitar", "piano", "other"]
 
@@ -27,37 +27,56 @@ public class CoreMLStemSeparator {
 
     /// Separates a local mixture audio file into six separate stem tracks using CoreML inference.
     /// Falls back to bundle demo assets if the model is not available or inference fails.
-    public func separate(audioURL: URL) async throws -> [String: URL] {
+    public func separate(
+        audioURL: URL,
+        processingMode: String?,
+        modelQuality: String?,
+        onProgress: @escaping (String, Double) -> Void
+    ) async throws -> [String: URL] {
         guard FileManager.default.fileExists(atPath: audioURL.path) else {
             throw NSError(domain: "CoreMLStemSeparator", code: 404,
                           userInfo: [NSLocalizedDescriptionKey: "Input mixture file not found at \(audioURL.path)"])
         }
 
+        onProgress("Memulai pemisahan stem...", 0.02)
         print("[StemSeparator] Starting separation on: \(audioURL.lastPathComponent)")
 
         // Try real CoreML inference first
         do {
-            let result = try await runRealInference(audioURL: audioURL)
+            let result = try await runRealInference(audioURL: audioURL, processingMode: processingMode, modelQuality: modelQuality, onProgress: onProgress)
+            onProgress("Proses pemisahan stem berhasil diselesaikan!", 1.0)
             print("[StemSeparator] ✅ Real CoreML separation succeeded.")
             return result
         } catch {
+            onProgress("CoreML akselerasi gagal: \(error.localizedDescription)", 0.1)
+            onProgress("Beralih ke mode fallback (simulasi)...", 0.15)
             print("[StemSeparator] ⚠️ CoreML inference failed: \(error.localizedDescription)")
             print("[StemSeparator] Falling back to bundle demo assets.")
-            return try copyBundleFallback(audioURL: audioURL)
+            let result = try copyBundleFallback(audioURL: audioURL)
+            onProgress("Proses pemisahan stem selesai (mode fallback)!", 1.0)
+            return result
         }
     }
 
     // MARK: - Real CoreML Inference Pipeline
 
-    private func runRealInference(audioURL: URL) async throws -> [String: URL] {
+    private func runRealInference(
+        audioURL: URL,
+        processingMode: String?,
+        modelQuality: String?,
+        onProgress: @escaping (String, Double) -> Void
+    ) async throws -> [String: URL] {
         // 1. Load CoreML model
-        let model = try loadModel()
+        onProgress("Memuat model CoreML...", 0.05)
+        let model = try loadModel(processingMode: processingMode, modelQuality: modelQuality)
 
         // 2. Decode audio to stereo PCM @ 44100 Hz
+        onProgress("Melakukan decoding format audio campuran...", 0.1)
         let (leftChannel, rightChannel) = try loadStereoAudio(url: audioURL)
         print("[StemSeparator] Audio loaded: \(leftChannel.count) samples per channel")
 
         // 3. Compute STFT for both channels
+        onProgress("Menghitung analisis frekuensi (STFT)...", 0.2)
         let leftSTFT = computeChannelSTFT(samples: leftChannel)
         let rightSTFT = computeChannelSTFT(samples: rightChannel)
         let totalFrames = leftSTFT.real.count
@@ -69,23 +88,30 @@ public class CoreMLStemSeparator {
         }
 
         // 4. Chunk, run inference, collect output STFT per stem
-        var stemSTFTs: [String: (real: [[Float]], imag: [[Float]])] = [:]
+        var stemSTFTs: [String: (realL: [[Float]], imagL: [[Float]], realR: [[Float]], imagR: [[Float]])] = [:]
         for name in stemNames {
-            stemSTFTs[name] = (real: [[Float]](repeating: [Float](repeating: 0, count: nBins), count: totalFrames),
-                               imag: [[Float]](repeating: [Float](repeating: 0, count: nBins), count: totalFrames))
+            stemSTFTs[name] = (
+                realL: [[Float]](repeating: [Float](repeating: 0, count: nBins), count: totalFrames),
+                imagL: [[Float]](repeating: [Float](repeating: 0, count: nBins), count: totalFrames),
+                realR: [[Float]](repeating: [Float](repeating: 0, count: nBins), count: totalFrames),
+                imagR: [[Float]](repeating: [Float](repeating: 0, count: nBins), count: totalFrames)
+            )
         }
 
-        // Process in chunks of 32 frames with 50% overlap for smooth transitions
-        let overlap = chunkFrames / 2  // 16 frames overlap
+        // Process in chunks of chunkFrames with 50% overlap for smooth transitions
+        let overlap = chunkFrames / 2
         let step = chunkFrames - overlap
         var chunkStart = 0
         var chunkCount = 0
+
+        let totalChunks = Int(ceil(Double(totalFrames) / Double(step)))
+        onProgress("Menjalankan inferensi neural network (\(totalChunks) chunks)...", 0.3)
 
         while chunkStart < totalFrames {
             let chunkEnd = min(chunkStart + chunkFrames, totalFrames)
             let actualFrames = chunkEnd - chunkStart
 
-            // Build input tensor [1, 4, 32, 2048]
+            // Build input tensor [1, 4, chunkFrames, nBins]
             let inputArray = try buildInputTensor(
                 leftReal: leftSTFT.real, leftImag: leftSTFT.imag,
                 rightReal: rightSTFT.real, rightImag: rightSTFT.imag,
@@ -100,7 +126,7 @@ public class CoreMLStemSeparator {
                 guard let outputFeature = prediction.featureValue(for: name),
                       let multiArray = outputFeature.multiArrayValue else { continue }
 
-                let (stemReal, stemImag) = extractStemSTFT(from: multiArray, frameCount: actualFrames)
+                let (stemRealL, stemImagL, stemRealR, stemImagR) = extractStemSTFTStereo(from: multiArray, frameCount: actualFrames)
 
                 // Overlap-add: use triangular (linear crossfade) window for overlapping region
                 for f in 0..<actualFrames {
@@ -110,20 +136,26 @@ public class CoreMLStemSeparator {
                     // Crossfade weight for overlap region
                     var weight: Float = 1.0
                     if chunkStart > 0 && f < overlap {
-                        // Fade in for the overlap region at the start of this chunk
                         weight = Float(f) / Float(overlap)
                     }
 
                     for b in 0..<nBins {
                         if chunkStart > 0 && f < overlap {
-                            // Blend with previous chunk's contribution
-                            stemSTFTs[name]!.real[globalFrame][b] =
-                                stemSTFTs[name]!.real[globalFrame][b] * (1.0 - weight) + stemReal[f][b] * weight
-                            stemSTFTs[name]!.imag[globalFrame][b] =
-                                stemSTFTs[name]!.imag[globalFrame][b] * (1.0 - weight) + stemImag[f][b] * weight
+                            // Blend L
+                            stemSTFTs[name]!.realL[globalFrame][b] =
+                                stemSTFTs[name]!.realL[globalFrame][b] * (1.0 - weight) + stemRealL[f][b] * weight
+                            stemSTFTs[name]!.imagL[globalFrame][b] =
+                                stemSTFTs[name]!.imagL[globalFrame][b] * (1.0 - weight) + stemImagL[f][b] * weight
+                            // Blend R
+                            stemSTFTs[name]!.realR[globalFrame][b] =
+                                stemSTFTs[name]!.realR[globalFrame][b] * (1.0 - weight) + stemRealR[f][b] * weight
+                            stemSTFTs[name]!.imagR[globalFrame][b] =
+                                stemSTFTs[name]!.imagR[globalFrame][b] * (1.0 - weight) + stemImagR[f][b] * weight
                         } else {
-                            stemSTFTs[name]!.real[globalFrame][b] = stemReal[f][b]
-                            stemSTFTs[name]!.imag[globalFrame][b] = stemImag[f][b]
+                            stemSTFTs[name]!.realL[globalFrame][b] = stemRealL[f][b]
+                            stemSTFTs[name]!.imagL[globalFrame][b] = stemImagL[f][b]
+                            stemSTFTs[name]!.realR[globalFrame][b] = stemRealR[f][b]
+                            stemSTFTs[name]!.imagR[globalFrame][b] = stemImagR[f][b]
                         }
                     }
                 }
@@ -131,12 +163,16 @@ public class CoreMLStemSeparator {
 
             chunkStart += step
             chunkCount += 1
-            if chunkCount % 10 == 0 {
+            
+            let currentProgress = 0.3 + (Double(chunkCount) / Double(totalChunks)) * 0.5
+            if chunkCount % 5 == 0 || chunkStart >= totalFrames {
+                onProgress("Memproses chunk \(chunkCount)/\(totalChunks) (\(min(chunkStart, totalFrames))/\(totalFrames) frame)", currentProgress)
                 print("[StemSeparator] Processed \(chunkCount) chunks (\(min(chunkStart, totalFrames))/\(totalFrames) frames)")
             }
         }
 
         print("[StemSeparator] Inference complete: \(chunkCount) chunks processed")
+        onProgress("Inference selesai. Rekonstruksi gelombang audio stereo (iSTFT)...", 0.8)
 
         // 5. iSTFT each stem → write M4A
         let outputDir = FileManager.default.temporaryDirectory
@@ -144,11 +180,15 @@ public class CoreMLStemSeparator {
         try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
 
         var outputPaths: [String: URL] = [:]
-        for name in stemNames {
+        for (idx, name) in stemNames.enumerated() {
+            let writeProgress = 0.8 + (Double(idx) / Double(stemNames.count)) * 0.18
+            onProgress("Menulis file audio untuk stem: \(name.uppercased())", writeProgress)
+            
             let stemData = stemSTFTs[name]!
-            // Use left channel STFT (Re_L, Im_L) for mono output
-            guard let pcmBuffer = featureExtractor.computeISTFT(
-                real: stemData.real, imag: stemData.imag,
+            // Reconstruct stereo PCM
+            guard let pcmBuffer = featureExtractor.computeISTFTStereo(
+                realL: stemData.realL, imagL: stemData.imagL,
+                realR: stemData.realR, imagR: stemData.imagR,
                 nFFT: nFFT, hopSize: hopSize, sampleRate: targetSampleRate
             ) else {
                 print("[StemSeparator] ⚠️ iSTFT failed for \(name), skipping")
@@ -158,7 +198,7 @@ public class CoreMLStemSeparator {
             let outputURL = outputDir.appendingPathComponent("\(name).m4a")
             try writeAudioBuffer(pcmBuffer, to: outputURL)
             outputPaths[name] = outputURL
-            print("[StemSeparator] Wrote \(name).m4a (\(pcmBuffer.frameLength) samples)")
+            print("[StemSeparator] Wrote stereo \(name).m4a (\(pcmBuffer.frameLength) samples)")
         }
 
         return outputPaths
@@ -166,19 +206,58 @@ public class CoreMLStemSeparator {
 
     // MARK: - Model Loading
 
-    private func loadModel() throws -> MLModel {
-        // Try the fp32 full model first, then the lighter fp16 model
-        let modelNames = [
-            "dun_tfc_tdf_b9_l3_w_6stems_32_fp32_v2.0.1",
-            "dunlight_tfc_tdf_b9_l3_w_subv1_cirm_6stems_64_fp16_v2.0.0"
-        ]
+    private func loadModel(processingMode: String?, modelQuality: String?) throws -> MLModel {
+        let preferredNames: [String]
+        if let quality = modelQuality {
+            if quality == "Model Ringan" {
+                preferredNames = [
+                    "dunlight_tfc_tdf_b9_l3_w_subv1_cirm_6stems_64_fp16_v2.0.0",
+                    "dun_tfc_tdf_b9_l3_w_6stems_32_fp32_v2.0.1"
+                ]
+            } else {
+                preferredNames = [
+                    "dun_tfc_tdf_b9_l3_w_6stems_32_fp32_v2.0.1",
+                    "dunlight_tfc_tdf_b9_l3_w_subv1_cirm_6stems_64_fp16_v2.0.0"
+                ]
+            }
+        } else {
+            // Default to Light version first because FP32 is too heavy/slow
+            preferredNames = [
+                "dunlight_tfc_tdf_b9_l3_w_subv1_cirm_6stems_64_fp16_v2.0.0",
+                "dun_tfc_tdf_b9_l3_w_6stems_32_fp32_v2.0.1"
+            ]
+        }
 
-        for modelName in modelNames {
+        for modelName in preferredNames {
             if let modelURL = Bundle.main.url(forResource: modelName, withExtension: "mlmodelc") {
                 let config = MLModelConfiguration()
-                config.computeUnits = .all  // Use Neural Engine + GPU + CPU
+                if let mode = processingMode {
+                    if mode == "CPU Only" {
+                        config.computeUnits = .cpuOnly
+                    } else if mode == "GPU Accel" {
+                        config.computeUnits = .cpuAndGPU
+                    } else {
+                        config.computeUnits = .all
+                    }
+                } else {
+                    config.computeUnits = .all
+                }
                 let model = try MLModel(contentsOf: modelURL, configuration: config)
-                print("[StemSeparator] Loaded CoreML model: \(modelName)")
+                
+                // Dynamically inspect model shapes
+                if let inputDesc = model.modelDescription.inputDescriptionsByName["mixture"],
+                   let constraint = inputDesc.multiArrayConstraint {
+                    let shape = constraint.shape
+                    if shape.count >= 4 {
+                        self.chunkFrames = shape[2].intValue
+                        self.nBins = shape[3].intValue
+                        self.nFFT = self.nBins * 2
+                        self.hopSize = self.nFFT / 4
+                        print("[StemSeparator] Configured dynamic DSP parameters: nBins=\(self.nBins), chunkFrames=\(self.chunkFrames), nFFT=\(self.nFFT), hopSize=\(self.hopSize)")
+                    }
+                }
+                
+                print("[StemSeparator] Loaded CoreML model: \(modelName) with units: \(config.computeUnits)")
                 return model
             }
         }
@@ -344,39 +423,53 @@ public class CoreMLStemSeparator {
 
     // MARK: - Output Extraction
 
-    /// Extracts real and imaginary STFT frames from a model output MultiArray [1, 4, 32, 2048].
-    /// We take channels 0 (Re_L) and 1 (Im_L) as mono output.
-    private func extractStemSTFT(from multiArray: MLMultiArray, frameCount: Int) -> (real: [[Float]], imag: [[Float]]) {
-        var realFrames: [[Float]] = []
-        var imagFrames: [[Float]] = []
+    /// Extracts real and imaginary STFT frames from a model output MultiArray [1, 4, chunkFrames, nBins].
+    /// Returns stereo real/imag arrays for Left and Right channels.
+    private func extractStemSTFTStereo(
+        from multiArray: MLMultiArray,
+        frameCount: Int
+    ) -> (realL: [[Float]], imagL: [[Float]], realR: [[Float]], imagR: [[Float]]) {
+        var realLFrames: [[Float]] = []
+        var imagLFrames: [[Float]] = []
+        var realRFrames: [[Float]] = []
+        var imagRFrames: [[Float]] = []
 
         for f in 0..<frameCount {
-            var realBins = [Float](repeating: 0, count: nBins)
-            var imagBins = [Float](repeating: 0, count: nBins)
+            var realLBins = [Float](repeating: 0, count: nBins)
+            var imagLBins = [Float](repeating: 0, count: nBins)
+            var realRBins = [Float](repeating: 0, count: nBins)
+            var imagRBins = [Float](repeating: 0, count: nBins)
 
             for b in 0..<nBins {
-                let realIdx = 0 * chunkFrames * nBins + f * nBins + b  // channel 0 = Re_L
-                let imagIdx = 1 * chunkFrames * nBins + f * nBins + b  // channel 1 = Im_L
+                let idxReL = 0 * chunkFrames * nBins + f * nBins + b
+                let idxImL = 1 * chunkFrames * nBins + f * nBins + b
+                let idxReR = 2 * chunkFrames * nBins + f * nBins + b
+                let idxImR = 3 * chunkFrames * nBins + f * nBins + b
 
-                realBins[b] = multiArray[realIdx].floatValue
-                imagBins[b] = multiArray[imagIdx].floatValue
+                realLBins[b] = multiArray[idxReL].floatValue
+                imagLBins[b] = multiArray[idxImL].floatValue
+                realRBins[b] = multiArray[idxReR].floatValue
+                imagRBins[b] = multiArray[idxImR].floatValue
             }
 
-            realFrames.append(realBins)
-            imagFrames.append(imagBins)
+            realLFrames.append(realLBins)
+            imagLFrames.append(imagLBins)
+            realRFrames.append(realRBins)
+            imagRFrames.append(imagRBins)
         }
 
-        return (realFrames, imagFrames)
+        return (realLFrames, imagLFrames, realRFrames, imagRFrames)
     }
 
     // MARK: - Audio Writing
 
     private func writeAudioBuffer(_ buffer: AVAudioPCMBuffer, to url: URL) throws {
         // Write as M4A (AAC)
+        let channelCount = Int(buffer.format.channelCount)
         guard let outputFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: targetSampleRate,
-            channels: 1,
+            channels: AVAudioChannelCount(channelCount),
             interleaved: false
         ) else {
             throw NSError(domain: "CoreMLStemSeparator", code: 500,
@@ -386,8 +479,8 @@ public class CoreMLStemSeparator {
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: targetSampleRate,
-            AVNumberOfChannelsKey: 1,
-            AVEncoderBitRateKey: 128000,
+            AVNumberOfChannelsKey: channelCount,
+            AVEncoderBitRateKey: channelCount * 96000,
             AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
         ]
 

@@ -1,6 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../state/project_controller.dart';
+import '../../state/studio_settings_controller.dart';
+import '../../services/native_ios_audio_service.dart';
+import '../../models/audio_project.dart';
 import '../stem_mixer/stem_mixer_screen.dart';
 
 /// Screen shown after importing audio. Lets user pick which stems/instruments
@@ -25,6 +29,9 @@ class _StemSetupScreenState extends State<StemSetupScreen>
   };
 
   bool _isProcessing = false;
+  double _progress = 0.0;
+  final List<String> _logs = [];
+  final ScrollController _logScrollController = ScrollController();
   late AnimationController _pulseCtrl;
   late Animation<double> _pulseAnim;
 
@@ -82,7 +89,20 @@ class _StemSetupScreenState extends State<StemSetupScreen>
   @override
   void dispose() {
     _pulseCtrl.dispose();
+    _logScrollController.dispose();
     super.dispose();
+  }
+
+  void _scrollLogToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_logScrollController.hasClients) {
+        _logScrollController.animateTo(
+          _logScrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   int get _selectedCount =>
@@ -96,11 +116,47 @@ class _StemSetupScreenState extends State<StemSetupScreen>
       return;
     }
 
-    setState(() => _isProcessing = true);
-    final controller = Provider.of<ProjectController>(context, listen: false);
+    setState(() {
+      _isProcessing = true;
+      _logs.clear();
+      _progress = 0.0;
+    });
 
-    // Trigger AI separation on the native side
-    await controller.runProjectAnalysis(enabledStems: _selectedStems);
+    final service = NativeIosAudioService();
+    final subscription = service.separationProgressStream.listen((data) {
+      if (mounted) {
+        setState(() {
+          final logMsg = data['log'] as String;
+          final progVal = data['progress'] as double;
+          
+          if (logMsg.isNotEmpty) {
+            _logs.add(logMsg);
+            _scrollLogToBottom();
+          }
+          _progress = progVal;
+        });
+      }
+    });
+
+    final controller = Provider.of<ProjectController>(context, listen: false);
+    final settingsController = Provider.of<StudioSettingsController>(context, listen: false);
+
+    try {
+      // Trigger AI separation on the native side
+      await controller.runStemSeparation(
+        enabledStems: _selectedStems,
+        processingMode: settingsController.settings.processingMode,
+        modelQuality: settingsController.settings.modelQuality,
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _logs.add('Terjadi kesalahan: $e');
+        });
+      }
+    } finally {
+      subscription.cancel();
+    }
 
     if (!mounted) return;
     setState(() => _isProcessing = false);
@@ -109,6 +165,177 @@ class _StemSetupScreenState extends State<StemSetupScreen>
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(builder: (_) => const StemMixerScreen()),
+    );
+  }
+
+  Widget _buildLoadingView(AudioProject? project) {
+    final percent = (_progress * 100).toInt();
+    
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const SizedBox(height: 24),
+            // Rotating/pulsing glow studio icon
+            Container(
+              width: 90,
+              height: 90,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFFFF2E93).withValues(alpha: 0.25),
+                    blurRadius: 40,
+                    spreadRadius: 8,
+                  ),
+                ],
+              ),
+              child: Center(
+                child: RotationTransition(
+                  turns: _pulseCtrl,
+                  child: const Icon(
+                    Icons.auto_awesome_rounded,
+                    color: Color(0xFFFF2E93),
+                    size: 40,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 28),
+            
+            // Progress percentage & bar
+            Text(
+              '$percent%',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 44,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -1,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'MEMPROSES AUDIO DENGAN AI',
+              style: TextStyle(
+                color: Colors.white38,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 2,
+              ),
+            ),
+            const SizedBox(height: 20),
+            
+            // Custom modern progress bar
+            Container(
+              height: 6,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(3),
+              ),
+              child: Stack(
+                children: [
+                  AnimatedFractionallySizedBox(
+                    duration: const Duration(milliseconds: 300),
+                    widthFactor: _progress.clamp(0.0, 1.0),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFFFF2E93), Color(0xFFFF8C37)],
+                        ),
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            
+            // Console log panel
+            Expanded(
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0A0713),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: Colors.greenAccent,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'LOG PROSES STUDIO',
+                          style: TextStyle(
+                            color: Colors.white54,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    const Divider(color: Colors.white10, height: 1),
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child: ListView.builder(
+                        controller: _logScrollController,
+                        itemCount: _logs.length,
+                        itemBuilder: (context, index) {
+                          final log = _logs[index];
+                          final isError = log.contains('gagal') || log.contains('Error') || log.contains('kesalahan');
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 6.0),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  '> ',
+                                  style: TextStyle(
+                                    color: Color(0xFFFF2E93),
+                                    fontFamily: 'monospace',
+                                    fontSize: 11,
+                                  ),
+                                ),
+                                Expanded(
+                                  child: Text(
+                                    log,
+                                    style: TextStyle(
+                                      color: isError ? Colors.redAccent : Colors.white70,
+                                      fontFamily: 'monospace',
+                                      fontSize: 11,
+                                      height: 1.3,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -122,14 +349,18 @@ class _StemSetupScreenState extends State<StemSetupScreen>
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: const Text('Pilih Instrumen'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
+        title: Text(_isProcessing ? 'Memproses Audio...' : 'Pilih Instrumen'),
+        leading: _isProcessing
+            ? const SizedBox.shrink()
+            : IconButton(
+                icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
+                onPressed: () => Navigator.pop(context),
+              ),
       ),
-      body: Column(
-        children: [
+      body: _isProcessing
+          ? _buildLoadingView(project)
+          : Column(
+              children: [
           // ── Header: Song Info ────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 0, 24, 0),

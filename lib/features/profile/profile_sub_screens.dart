@@ -413,6 +413,9 @@ class _StudioSettingsScreenState extends State<StudioSettingsScreen> {
     final List<String> processingModes = ['CPU Only', 'GPU Accel', 'Neural Engine'];
     final int processingModeIndex = processingModes.indexOf(settings.processingMode);
 
+    final List<String> modelQualities = ['Model Ringan', 'Model Standar'];
+    final int modelQualityIndex = modelQualities.indexOf(settings.modelQuality);
+
     final isAppleMusic = settings.uiStyle == 1;
 
     return Scaffold(
@@ -779,6 +782,7 @@ class _StudioSettingsScreenState extends State<StudioSettingsScreen> {
                         child: Padding(
                           padding: const EdgeInsets.all(16),
                           child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               _buildSegmentedSetting(
                                 context,
@@ -787,6 +791,79 @@ class _StudioSettingsScreenState extends State<StudioSettingsScreen> {
                                 processingModes,
                                 processingModeIndex,
                                 (val) => settingsController.updateProcessingMode(processingModes[val]),
+                              ),
+                              const Divider(color: Colors.white10, height: 28),
+                              _buildSegmentedSetting(
+                                context,
+                                'Model Pemisahan',
+                                'Ukuran & presisi neural network',
+                                modelQualities,
+                                modelQualityIndex,
+                                (val) => settingsController.updateModelQuality(modelQualities[val]),
+                              ),
+                              const Divider(color: Colors.white10, height: 28),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Icon(Icons.bolt_rounded, color: primaryColor, size: 16),
+                                      const SizedBox(width: 6),
+                                      const Text(
+                                        'Panduan Akselerasi & Kinerja:',
+                                        style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 10),
+                                  RichText(
+                                    text: TextSpan(
+                                      style: const TextStyle(fontSize: 11, height: 1.4),
+                                      children: [
+                                        const TextSpan(
+                                          text: '• CPU Only: ',
+                                          style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
+                                        ),
+                                        const TextSpan(
+                                          text: 'Lambat. Aman untuk seluruh tipe iPhone, namun memakan waktu lebih lama karena beban komputasi AI yang berat.\n',
+                                          style: TextStyle(color: Colors.white38),
+                                        ),
+                                        const TextSpan(
+                                          text: '• GPU Accel: ',
+                                          style: TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold),
+                                        ),
+                                        const TextSpan(
+                                          text: 'Cepat. Menggunakan akselerasi grafis Metal GPU untuk rendering paralel yang lebih responsif.\n',
+                                          style: TextStyle(color: Colors.white70),
+                                        ),
+                                        TextSpan(
+                                          text: '• Neural Engine: ',
+                                          style: TextStyle(color: primaryColor, fontWeight: FontWeight.bold),
+                                        ),
+                                        const TextSpan(
+                                          text: 'Paling Cepat (Direkomendasikan). Menggunakan Apple Neural Engine (ANE) khusus chip Apple Silicon untuk performa 3x - 5x lebih cepat dan hemat baterai.\n\n',
+                                          style: TextStyle(color: Colors.white),
+                                        ),
+                                        const TextSpan(
+                                          text: '• Model Ringan: ',
+                                          style: TextStyle(color: Color(0xFF00FF66), fontWeight: FontWeight.bold),
+                                        ),
+                                        const TextSpan(
+                                          text: 'Inference 15-30 detik. FP16 (Half Precision) terkompresi dengan performa stabil dan memori rendah. Sangat direkomendasikan untuk menghindari crash pada iPhone.\n',
+                                          style: TextStyle(color: Colors.white70),
+                                        ),
+                                        const TextSpan(
+                                          text: '• Model Standar: ',
+                                          style: TextStyle(color: Color(0xFF00C6FF), fontWeight: FontWeight.bold),
+                                        ),
+                                        const TextSpan(
+                                          text: 'Inference 2-3 menit. FP32 (Full Precision) dengan kualitas isolasi vokal/instrumen maksimal, namun membutuhkan RAM besar dan prosesor cepat.',
+                                          style: TextStyle(color: Colors.white60),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
                           ),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../core/constants/app_constants.dart';
@@ -6,6 +7,26 @@ class NativeIosAudioService {
   static const MethodChannel _channel = MethodChannel(
     AppConstants.methodChannelName,
   );
+
+  static final StreamController<Map<String, dynamic>> _separationProgressController =
+      StreamController<Map<String, dynamic>>.broadcast();
+
+  Stream<Map<String, dynamic>> get separationProgressStream =>
+      _separationProgressController.stream;
+
+  NativeIosAudioService() {
+    _channel.setMethodCallHandler(_methodCallHandler);
+  }
+
+  static Future<dynamic> _methodCallHandler(MethodCall call) async {
+    switch (call.method) {
+      case 'onSeparationProgress':
+        final log = call.arguments['log'] as String? ?? '';
+        final progress = (call.arguments['progress'] as num?)?.toDouble() ?? 0.0;
+        _separationProgressController.add({'log': log, 'progress': progress});
+        break;
+    }
+  }
 
   Future<String?> importAudio() async {
     try {
@@ -39,10 +60,12 @@ class NativeIosAudioService {
     }
   }
 
-  Future<Map<String, String>> separateStems(String audioPath) async {
+  Future<Map<String, String>> separateStems(String audioPath, {String? processingMode, String? modelQuality}) async {
     try {
       final Map? result = await _channel.invokeMethod<Map>('separateStems', {
         'audioPath': audioPath,
+        'processingMode': processingMode,
+        'modelQuality': modelQuality,
       });
       if (result != null) {
         return result.map(
@@ -243,6 +266,14 @@ class NativeIosAudioService {
       await _channel.invokeMethod('stopMetronome');
     } catch (e) {
       debugPrint('Native stopMetronome failed: $e');
+    }
+  }
+
+  Future<void> setMetronomeVolume(double volume) async {
+    try {
+      await _channel.invokeMethod('setMetronomeVolume', {'volume': volume});
+    } catch (e) {
+      debugPrint('Native setMetronomeVolume failed: $e');
     }
   }
 

@@ -413,13 +413,18 @@ class ProjectController with ChangeNotifier {
   }
 
   Future<void> runProjectAnalysis({Map<String, bool>? enabledStems}) async {
+    await runStemSeparation(enabledStems: enabledStems);
+  }
+
+  Future<void> runStemSeparation({Map<String, bool>? enabledStems, String? processingMode, String? modelQuality}) async {
     final project = _activeProject;
     if (project == null || project.originalAudioPath == null) return;
 
     _activeProject = project.copyWith(
       stemStatus: AnalysisStatus.processing,
-      chordStatus: AnalysisStatus.processing,
       beatStatus: AnalysisStatus.processing,
+      // Chord detection is kept separate/unavailable initially
+      chordStatus: project.chordSegments.isNotEmpty ? AnalysisStatus.ready : AnalysisStatus.unavailable,
     );
     notifyListeners();
 
@@ -427,41 +432,29 @@ class ProjectController with ChangeNotifier {
       final nativeService = NativeIosAudioService();
       
       Map<String, String> stemPaths = {};
-      List<ChordSegment> chordSegments = [];
       double tempo = 120.0;
       String keySig = 'C';
 
       final bool isNativeIOSSupported = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
       if (isNativeIOSSupported) {
-        // 1. Separate stems
-        final rawStems = await nativeService.separateStems(project.originalAudioPath!);
+        // 1. Separate stems with selected acceleration unit and model quality
+        final rawStems = await nativeService.separateStems(
+          project.originalAudioPath!,
+          processingMode: processingMode,
+          modelQuality: modelQuality,
+        );
         stemPaths = Map<String, String>.from(rawStems);
         if (enabledStems != null) {
           stemPaths.removeWhere((key, value) => !(enabledStems[key] ?? false));
         }
 
-        // 2. Analyze chords
-        final chordData = await nativeService.analyzeChords(project.originalAudioPath!);
-        chordSegments = chordData.map((c) {
-          return ChordSegment(
-            id: _uuid.v4(),
-            chordName: c['name'] as String,
-            startTimeMs: ((c['startTime'] as double) * 1000).toInt(),
-            endTimeMs: ((c['endTime'] as double) * 1000).toInt(),
-          );
-        }).toList();
-
-        // 3. Analyze beats and tempo
+        // 2. Analyze beats and tempo
         final beatTempoData = await nativeService.analyzeBeatsAndTempo(project.originalAudioPath!);
         tempo = (beatTempoData['tempo'] as num).toDouble();
         
         if (beatTempoData.containsKey('key')) {
           keySig = _mapPitchClassToKey(beatTempoData['key'] as int);
-        } else {
-          if (chordSegments.isNotEmpty) {
-            keySig = chordSegments.first.chordName.split(':').first;
-          }
         }
       } else {
         // Use demo assets as mock stems, filtered by selection
@@ -479,28 +472,6 @@ class ProjectController with ChangeNotifier {
             stemPaths[key] = path;
           }
         });
-
-        // Populate sample chords to the end of the song
-        final durationMs = _playerService.player.duration?.inMilliseconds ?? 180000;
-        final chordList = ['C:maj', 'G:maj', 'A:min', 'F:maj', 'D:min', 'E:min', 'A:maj', 'D:maj'];
-        chordSegments = [];
-        int currentMs = 0;
-        int chordIdx = 0;
-        const segmentDurationMs = 4000;
-        
-        while (currentMs < durationMs) {
-          final endMs = (currentMs + segmentDurationMs).clamp(0, durationMs);
-          chordSegments.add(
-            ChordSegment(
-              id: _uuid.v4(),
-              chordName: chordList[chordIdx % chordList.length],
-              startTimeMs: currentMs,
-              endTimeMs: endMs,
-            ),
-          );
-          currentMs = endMs;
-          chordIdx++;
-        }
         tempo = 120.0;
         keySig = 'C';
       }
@@ -514,39 +485,42 @@ class ProjectController with ChangeNotifier {
         other: stemPaths['other'],
       );
 
-      // 4. Auto-fetch lyrics from LRCLIB
-      String? plainLyrics;
-      String? syncedLyrics;
-      List<LyricLine> lyricLines = [];
-      try {
-        final query = project.title;
-        final list = await _lyricsService.searchLyrics(query);
-        if (list.isNotEmpty) {
-          final matched = list.firstWhere(
-            (item) => item['syncedLyrics'] != null && (item['syncedLyrics'] as String).isNotEmpty,
-            orElse: () => list.first,
-          );
-          plainLyrics = matched['plainLyrics'] as String?;
-          syncedLyrics = matched['syncedLyrics'] as String?;
-          
-          if (syncedLyrics != null && syncedLyrics.isNotEmpty) {
-            lyricLines = _lyricsService.parseLrc(syncedLyrics);
-          } else if (plainLyrics != null && plainLyrics.isNotEmpty) {
-            final splitLines = plainLyrics.split('\n');
-            for (int i = 0; i < splitLines.length; i++) {
-              lyricLines.add(LyricLine(
-                id: _uuid.v4(),
-                timeMs: 0,
-                text: splitLines[i].trim(),
-              ));
+      // 3. Auto-fetch lyrics from LRCLIB
+      String? plainLyrics = project.plainLyrics;
+      String? syncedLyrics = project.syncedLyrics;
+      List<LyricLine> lyricLines = List.from(project.lyricLines);
+
+      if (lyricLines.isEmpty) {
+        try {
+          final query = project.title;
+          final list = await _lyricsService.searchLyrics(query);
+          if (list.isNotEmpty) {
+            final matched = list.firstWhere(
+              (item) => item['syncedLyrics'] != null && (item['syncedLyrics'] as String).isNotEmpty,
+              orElse: () => list.first,
+            );
+            plainLyrics = matched['plainLyrics'] as String?;
+            syncedLyrics = matched['syncedLyrics'] as String?;
+            
+            if (syncedLyrics != null && syncedLyrics.isNotEmpty) {
+              lyricLines = _lyricsService.parseLrc(syncedLyrics);
+            } else if (plainLyrics != null && plainLyrics.isNotEmpty) {
+              final splitLines = plainLyrics.split('\n');
+              for (int i = 0; i < splitLines.length; i++) {
+                lyricLines.add(LyricLine(
+                  id: _uuid.v4(),
+                  timeMs: 0,
+                  text: splitLines[i].trim(),
+                ));
+              }
             }
           }
+        } catch (le) {
+          debugPrint('Auto lyric fetch failed: $le');
         }
-      } catch (le) {
-        debugPrint('Auto lyric fetch failed: $le');
       }
 
-      // If lyrics are not fetched, create mock lyrics for simulated test spanning the whole song
+      // If lyrics are still empty and we are simulating (not native), populate mock lyrics
       if (lyricLines.isEmpty && !isNativeIOSSupported) {
         final durationMs = _playerService.player.duration?.inMilliseconds ?? 180000;
         final List<String> lyricTexts = [
@@ -570,7 +544,6 @@ class ProjectController with ChangeNotifier {
           lyricLines.add(
             LyricLine(id: _uuid.v4(), timeMs: currentMs, text: text),
           );
-          
           plainLines.add(text);
           
           final minutes = (currentMs ~/ 60000).toString().padLeft(2, '0');
@@ -578,7 +551,7 @@ class ProjectController with ChangeNotifier {
           final msPart = ((currentMs % 1000) ~/ 10).toString().padLeft(2, '0');
           syncedLines.add("[$minutes:$seconds.$msPart]$text");
           
-          currentMs += 8000; // 8 seconds per lyric line
+          currentMs += 8000;
           lyricIdx++;
         }
         plainLyrics = plainLines.join('\n');
@@ -587,10 +560,8 @@ class ProjectController with ChangeNotifier {
 
       _activeProject = _activeProject!.copyWith(
         stemStatus: AnalysisStatus.ready,
-        chordStatus: AnalysisStatus.ready,
         beatStatus: AnalysisStatus.ready,
         stemFiles: stemFiles,
-        chordSegments: chordSegments,
         bpm: tempo,
         keySignature: keySig,
         timeSignature: '4/4',
@@ -612,11 +583,81 @@ class ProjectController with ChangeNotifier {
       await _playerService.loadProjectAudio(_activeProject!);
       notifyListeners();
     } catch (e) {
-      debugPrint('Separation and analysis failed: $e');
+      debugPrint('Stem separation and beat track failed: $e');
       _activeProject = project.copyWith(
         stemStatus: AnalysisStatus.error,
-        chordStatus: AnalysisStatus.error,
         beatStatus: AnalysisStatus.error,
+      );
+      notifyListeners();
+    }
+  }
+
+  Future<void> runChordDetection() async {
+    final project = _activeProject;
+    if (project == null || project.originalAudioPath == null) return;
+
+    _activeProject = project.copyWith(
+      chordStatus: AnalysisStatus.processing,
+    );
+    notifyListeners();
+
+    try {
+      final nativeService = NativeIosAudioService();
+      List<ChordSegment> chordSegments = [];
+
+      final bool isNativeIOSSupported = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+
+      if (isNativeIOSSupported) {
+        final chordData = await nativeService.analyzeChords(project.originalAudioPath!);
+        chordSegments = chordData.map((c) {
+          return ChordSegment(
+            id: _uuid.v4(),
+            chordName: c['name'] as String,
+            startTimeMs: ((c['startTime'] as double) * 1000).toInt(),
+            endTimeMs: ((c['endTime'] as double) * 1000).toInt(),
+          );
+        }).toList();
+      } else {
+        // Populate sample chords to the end of the song
+        final durationMs = _playerService.player.duration?.inMilliseconds ?? 180000;
+        final chordList = ['C:maj', 'G:maj', 'A:min', 'F:maj', 'D:min', 'E:min', 'A:maj', 'D:maj'];
+        chordSegments = [];
+        int currentMs = 0;
+        int chordIdx = 0;
+        const segmentDurationMs = 4000;
+        
+        while (currentMs < durationMs) {
+          final endMs = (currentMs + segmentDurationMs).clamp(0, durationMs);
+          chordSegments.add(
+            ChordSegment(
+              id: _uuid.v4(),
+              chordName: chordList[chordIdx % chordList.length],
+              startTimeMs: currentMs,
+              endTimeMs: endMs,
+            ),
+          );
+          currentMs = endMs;
+          chordIdx++;
+        }
+      }
+
+      _activeProject = _activeProject!.copyWith(
+        chordStatus: AnalysisStatus.ready,
+        chordSegments: chordSegments,
+        updatedAt: DateTime.now(),
+      );
+
+      // Update project in repository and active state
+      await _repository.updateProject(_activeProject!);
+      final index = _projects.indexWhere((p) => p.id == _activeProject!.id);
+      if (index != -1) {
+        _projects[index] = _activeProject!;
+      }
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Chord detection failed: $e');
+      _activeProject = project.copyWith(
+        chordStatus: AnalysisStatus.error,
       );
       notifyListeners();
     }

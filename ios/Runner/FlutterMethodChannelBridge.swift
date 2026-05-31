@@ -6,6 +6,7 @@ import UIKit
 public class FlutterMethodChannelBridge: NSObject {
     
     private let channelName = "music_stem_studio/native_audio"
+    private var channel: FlutterMethodChannel?
     
     // Core managers
     private let separator = CoreMLStemSeparator()
@@ -17,6 +18,7 @@ public class FlutterMethodChannelBridge: NSObject {
     
     public func register(with registrar: FlutterPluginRegistrar) {
         let channel = FlutterMethodChannel(name: channelName, binaryMessenger: registrar.messenger())
+        self.channel = channel
         registrar.addMethodCallDelegate(self, channel: channel)
     }
 }
@@ -48,11 +50,21 @@ extension FlutterMethodChannelBridge: FlutterPlugin {
                 return
             }
             
+            let processingMode = arguments?["processingMode"] as? String
+            let modelQuality = arguments?["modelQuality"] as? String
             let audioURL = URL(fileURLWithPath: audioPath)
             
             Task {
                 do {
-                    let stemURLs = try await separator.separate(audioURL: audioURL)
+                    let stemURLs = try await separator.separate(audioURL: audioURL, processingMode: processingMode, modelQuality: modelQuality) { [weak self] (log, progress) in
+                        guard let self = self else { return }
+                        DispatchQueue.main.async {
+                            self.channel?.invokeMethod("onSeparationProgress", arguments: [
+                                "log": log,
+                                "progress": progress
+                            ])
+                        }
+                    }
                     // Map local URLs to absolute path strings to pass back to Dart
                     var pathsDict: [String: String] = [:]
                     for (key, val) in stemURLs {
@@ -288,6 +300,14 @@ extension FlutterMethodChannelBridge: FlutterPlugin {
                 return
             }
             metronome.updateBPM(bpm)
+            result(nil)
+            
+        case "setMetronomeVolume":
+            guard let args = arguments, let volume = args["volume"] as? Double else {
+                result(FlutterError(code: "MISSING_ARGUMENT", message: "volume is required", details: nil))
+                return
+            }
+            metronome.setVolume(Float(volume))
             result(nil)
             
         case "loadLyrics":

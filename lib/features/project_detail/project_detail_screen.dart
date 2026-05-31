@@ -40,7 +40,37 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _initListeners());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initListeners();
+      try {
+        final settings = Provider.of<StudioSettingsController>(context, listen: false).settings;
+        setState(() {
+          _metronomeVol = settings.defaultMetronomeVolume;
+        });
+      } catch (_) {}
+    });
+  }
+
+  Future<void> _syncMetronome() async {
+    final controller = Provider.of<ProjectController>(context, listen: false);
+    final project = controller.activeProject;
+    if (project == null) return;
+
+    final nativeService = NativeIosAudioService();
+
+    if (_metronomeEnabled && _isPlaying) {
+      final baseBpm = project.bpm ?? 120.0;
+      final finalBpm = baseBpm * _tempoMultiplier;
+
+      await nativeService.setMetronomeVolume(_metronomeVol);
+      await nativeService.startMetronome(
+        bpm: finalBpm,
+        beatsPerBar: 4,
+        subdivisions: 1,
+      );
+    } else {
+      await nativeService.stopMetronome();
+    }
   }
 
   void _initListeners() {
@@ -69,6 +99,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     _playSub = player.playingStream.listen((playing) {
       if (!mounted) return;
       setState(() => _isPlaying = playing);
+      _syncMetronome();
     });
   }
 
@@ -78,6 +109,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     _durSub?.cancel();
     _playSub?.cancel();
     _chordSub?.cancel();
+    NativeIosAudioService().stopMetronome();
     super.dispose();
   }
 
@@ -180,12 +212,19 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
 
                   // Live Chord Display Banner
                   GestureDetector(
-                    onTap: hasChords
-                        ? () => Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (_) => const ChordViewerScreen()),
-                            )
-                        : null,
+                    onTap: () async {
+                      if (hasChords) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const ChordViewerScreen()),
+                        );
+                      } else if (project.chordStatus != AnalysisStatus.processing) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Memulai Deteksi Chord Offline...')),
+                        );
+                        await controller.runChordDetection();
+                      }
+                    },
                     child: LiquidGlassContainer(
                       borderRadius: 24,
                       tintColor: _activeChord != null ? primaryColor.withValues(alpha: 0.15) : null,
@@ -202,7 +241,11 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                                       Icon(Icons.piano_rounded, color: primaryColor, size: 14),
                                       const SizedBox(width: 6),
                                       Text(
-                                        hasChords ? 'CHORD AKTIF' : 'DETEKSI CHORD',
+                                        hasChords 
+                                            ? 'CHORD AKTIF' 
+                                            : (project.chordStatus == AnalysisStatus.processing 
+                                                ? 'AI MENGANALISIS AKOR...' 
+                                                : 'DETEKSI CHORD SEKARANG'),
                                         style: TextStyle(
                                           color: primaryColor,
                                           fontSize: 10,
@@ -214,29 +257,45 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                                   ),
                                   const SizedBox(height: 8),
                                   Text(
-                                    _activeChord?.chordName ?? (hasChords ? '—' : 'Belum Dianalisis'),
+                                    project.chordStatus == AnalysisStatus.processing
+                                        ? 'Memproses...'
+                                        : (_activeChord?.chordName ?? (hasChords ? '—' : 'Mulai Analisis')),
                                     style: TextStyle(
-                                      color: _activeChord != null ? Colors.white : Colors.white38,
-                                      fontSize: 42,
+                                      color: (project.chordStatus == AnalysisStatus.processing || _activeChord == null) ? Colors.white38 : Colors.white,
+                                      fontSize: (project.chordStatus == AnalysisStatus.processing) ? 32 : 42,
                                       fontWeight: FontWeight.w900,
                                       letterSpacing: -1,
                                     ),
                                   ),
-                                  if (hasChords)
-                                    Text(
-                                      '${_fmt(_position)} / ${_fmt(_duration)}',
-                                      style: const TextStyle(color: Colors.white38, fontSize: 11),
-                                    ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    hasChords
+                                        ? '${_fmt(_position)} / ${_fmt(_duration)}'
+                                        : (project.chordStatus == AnalysisStatus.processing 
+                                            ? 'Ini memerlukan waktu beberapa detik' 
+                                            : 'Ketuk untuk menjalankan pengenalan akor AI secara terpisah'),
+                                    style: const TextStyle(color: Colors.white38, fontSize: 11),
+                                  ),
                                 ],
                               ),
                             ),
-                            if (hasChords) ...[
+                            if (project.chordStatus == AnalysisStatus.processing) ...[
+                              const SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.5,
+                                  color: Color(0xFF00FFCC),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                            ] else if (hasChords) ...[
                               _buildNextChordBadge(project),
                               const SizedBox(width: 12),
                             ],
                             Icon(
-                              hasChords ? Icons.chevron_right_rounded : Icons.info_outline_rounded,
-                              color: Colors.white24,
+                              hasChords ? Icons.chevron_right_rounded : (project.chordStatus == AnalysisStatus.processing ? null : Icons.bolt_rounded),
+                              color: hasChords ? Colors.white24 : const Color(0xFF00FFCC),
                             ),
                           ],
                         ),
@@ -464,6 +523,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                     setState(() {
                       _metronomeEnabled = val;
                     });
+                    _syncMetronome();
                   },
                 ),
               ],
@@ -516,6 +576,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                       value: _metronomeVol,
                       onChanged: (val) {
                         setState(() => _metronomeVol = val);
+                        NativeIosAudioService().setMetronomeVolume(val);
                       },
                     ),
                   ),
@@ -527,6 +588,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                     setState(() {
                       _tempoMultiplier = _tempoMultiplier == 1 ? 2 : 1;
                     });
+                    _syncMetronome();
                   },
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),

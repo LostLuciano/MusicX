@@ -90,6 +90,10 @@ public class MetronomeManager {
         if wasRunning { start(bpm: newBPM, beatsPerBar: beatsPerBar, subdivisions: subdivisions) }
     }
 
+    public func setVolume(_ volume: Float) {
+        playerNode.volume = volume
+    }
+
     private func scheduleTick() {
         guard isRunning else { return }
 

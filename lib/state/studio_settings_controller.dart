@@ -99,6 +99,12 @@ class StudioSettingsController with ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> updateModelQuality(String quality) async {
+    _settings = _settings.copyWith(modelQuality: quality);
+    await _settingsService.saveSettings(_settings);
+    notifyListeners();
+  }
+
   Future<void> updateLatencyBoost(bool enabled) async {
     _settings = _settings.copyWith(latencyBoost: enabled);
     await _settingsService.saveSettings(_settings);

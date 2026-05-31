@@ -385,7 +385,9 @@ class _StemMixerScreenState extends State<StemMixerScreen> {
                                             ScaffoldMessenger.of(context).showSnackBar(
                                               const SnackBar(content: Text('Memulai Pemisahan Stem...')),
                                             );
-                                            await controller.runProjectAnalysis();
+                                            await controller.runStemSeparation(
+                                              processingMode: settingsController.settings.processingMode,
+                                            );
                                           } else {
                                             Navigator.push(
                                               context,

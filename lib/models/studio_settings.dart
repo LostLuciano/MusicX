@@ -8,6 +8,7 @@ class StudioSettings {
   final int bufferSize;
   final String sampleRate;
   final String processingMode;
+  final String modelQuality; // 'Model Ringan' or 'Model Standar'
   final bool latencyBoost;
   final bool hardwareMonitoring;
   final bool autoSave;
@@ -31,6 +32,7 @@ class StudioSettings {
     this.bufferSize = 256,
     this.sampleRate = '44.1 kHz',
     this.processingMode = 'Neural Engine',
+    this.modelQuality = 'Model Ringan',
     this.latencyBoost = true,
     this.hardwareMonitoring = false,
     this.autoSave = true,
@@ -55,6 +57,7 @@ class StudioSettings {
       bufferSize: json['bufferSize'] as int? ?? 256,
       sampleRate: json['sampleRate'] as String? ?? '44.1 kHz',
       processingMode: json['processingMode'] as String? ?? 'Neural Engine',
+      modelQuality: json['modelQuality'] as String? ?? 'Model Ringan',
       latencyBoost: json['latencyBoost'] as bool? ?? true,
       hardwareMonitoring: json['hardwareMonitoring'] as bool? ?? false,
       autoSave: json['autoSave'] as bool? ?? true,
@@ -79,6 +82,7 @@ class StudioSettings {
       'bufferSize': bufferSize,
       'sampleRate': sampleRate,
       'processingMode': processingMode,
+      'modelQuality': modelQuality,
       'latencyBoost': latencyBoost,
       'hardwareMonitoring': hardwareMonitoring,
       'autoSave': autoSave,
@@ -102,6 +106,7 @@ class StudioSettings {
     int? bufferSize,
     String? sampleRate,
     String? processingMode,
+    String? modelQuality,
     bool? latencyBoost,
     bool? hardwareMonitoring,
     bool? autoSave,
@@ -123,6 +128,7 @@ class StudioSettings {
       bufferSize: bufferSize ?? this.bufferSize,
       sampleRate: sampleRate ?? this.sampleRate,
       processingMode: processingMode ?? this.processingMode,
+      modelQuality: modelQuality ?? this.modelQuality,
       latencyBoost: latencyBoost ?? this.latencyBoost,
       hardwareMonitoring: hardwareMonitoring ?? this.hardwareMonitoring,
       autoSave: autoSave ?? this.autoSave,
