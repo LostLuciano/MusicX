@@ -98,7 +98,7 @@ public class AudioEngineManager {
             
             if startFrame < file.length {
                 let frameCount = AVAudioFrameCount(file.length - startFrame)
-                player.scheduleRegion(file, startingFrame: startFrame, frameCount: frameCount, at: nil, completionHandler: nil)
+                player.scheduleSegment(file, startingFrame: startFrame, frameCount: frameCount, at: nil, completionHandler: nil)
                 print("Rescheduled \(name) from frame \(startFrame) / \(file.length) (\(frameCount) frames)")
             }
         }
@@ -340,7 +340,7 @@ public class AudioEngineManager {
         
         while totalFramesRendered < totalFramesToRender {
             let framesToRender = min(maxNumberOfFrames, AVAudioFrameCount(totalFramesToRender - totalFramesRendered))
-            let status = audioEngine.renderOffline(framesToRender, to: buffer)
+            let status = try audioEngine.renderOffline(framesToRender, to: buffer)
             
             switch status {
             case .success:
